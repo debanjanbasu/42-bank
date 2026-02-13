@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 from typing import Optional, List, Protocol, Any, Sequence
-from agent_framework import Agent, resolve_agent_id
+from agent_framework import Agent, resolve_agent_id, InMemoryCheckpointStorage
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.azure import AzureAIClient
 from agent_framework.orchestrations import HandoffBuilder
@@ -43,7 +43,7 @@ def create_banking_workflow(
 
     if mode == "local":
         endpoint = os.getenv("FOUNDRY_LOCAL_ENDPOINT", "http://localhost:8080/v1")
-        model_id = model_name or os.getenv("MODEL_NAME", "qwen2.5-14b")
+        model_id = model_name or os.getenv("MODEL_NAME", "qwen2.5-1.5b")
         client = OpenAIChatClient(
             model_id=model_id, api_key="local-dev-key", base_url=endpoint
         )  # type: ignore
@@ -74,6 +74,7 @@ def create_banking_workflow(
         HandoffBuilder(
             name="BankingWorkflow",
             participants=[t_agent, tx_agent, iq_agent, ad_agent, mg_agent],
+            checkpoint_storage=InMemoryCheckpointStorage(),
         )
         .with_start_agent(t_agent)
         .add_handoff(t_agent, [tx_agent, iq_agent, ad_agent, mg_agent])
@@ -81,14 +82,14 @@ def create_banking_workflow(
         .add_handoff(iq_agent, [t_agent])
         .add_handoff(ad_agent, [t_agent])
         .add_handoff(mg_agent, [t_agent])
-        # Disable autonomous mode for Triage to prevent loops on 14b
+        # Enable autonomous mode for agent-to-agent reasoning
         .with_autonomous_mode(
             turn_limits={
-                resolve_agent_id(t_agent): 10,
-                resolve_agent_id(tx_agent): 10,
-                resolve_agent_id(iq_agent): 10,
-                resolve_agent_id(ad_agent): 10,
-                resolve_agent_id(mg_agent): 10,
+                resolve_agent_id(t_agent): 1,
+                resolve_agent_id(tx_agent): 5,
+                resolve_agent_id(iq_agent): 5,
+                resolve_agent_id(ad_agent): 5,
+                resolve_agent_id(mg_agent): 5,
             }
         )
         .build()

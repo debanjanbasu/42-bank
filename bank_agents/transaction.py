@@ -18,13 +18,10 @@ def get_agent(client: ChatClientProtocol, tools: BankingTools) -> Agent:
         name="TransactionAgent",
         instructions=(
             "You are the Transaction Specialist. "
-            "Review the conversation history to see what user needs to move. "
-            "1. TO SEND -> CALL 'send_money()'. "
-            "2. TO REQUEST -> CALL 'request_money()'. "
-            "3. TO APPROVE -> CALL 'approve_payment()'. "
-            "4. TO SEE PENDING -> CALL 'list_pending_requests()'. "
-            "PRO-ACTIVELY call the tool based on intent in history. "
-            "After tool call, report result and STOP."
+            "1. REVIEW conversation history to see what user needs to move. "
+            "2. USE 'send_money', 'request_money', or 'approve_payment'. "
+            "3. REPORT the result and STOP. "
+            "4. IF user wants balance or history -> CALL 'handoff_to_TriageAgent()'."
         ),
         tools=[
             tools.send_money,

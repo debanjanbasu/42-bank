@@ -11,9 +11,8 @@ from identity import IdentityManager
 from ledger import LedgerEngine
 from agents import create_banking_workflow
 from bootstrap import bootstrap
-from agent_framework import WorkflowEvent, AgentResponse
-from agent_framework.orchestrations import HandoffAgentUserRequest
-from agent_framework._workflows._workflow import Workflow
+from agent_framework import AgentResponse, AgentThread, Message, Content
+from agent_framework._workflows._agent import WorkflowAgent
 
 
 def check_connectivity(endpoint: str) -> bool:
@@ -24,18 +23,9 @@ def check_connectivity(endpoint: str) -> bool:
         return False
 
 
-def clean_output(text: str) -> str:
-    if not text:
-        return ""
-    text = re.sub(r"<tool_call>.*?</tool_call>", "", text, flags=re.DOTALL)
-    text = re.sub(r"\[?\{'type': 'text'.*?\}\]?", "", text, flags=re.DOTALL)
-    text = re.sub(r"```json.*?```", "", text, flags=re.DOTALL)
-    return text.strip()
-
-
 def parse_txt(content: Any) -> str:
     if isinstance(content, str):
-        # Strip stringified JSON artifacts
+        # Clean JSON artifacts often seen in small model outputs
         content = re.sub(r"^\[?\{'type': 'text', 'text': ['\"]", "", content)
         content = re.sub(r"['\"]\}\]?$", "", content)
         return content.strip()
@@ -46,64 +36,43 @@ def parse_txt(content: Any) -> str:
     return str(content)
 
 
-def handle_events(
-    events: List[WorkflowEvent[Any]],
-) -> List[WorkflowEvent[HandoffAgentUserRequest]]:
-    hil = []
-    for e in events:
-        if e.type == "handoff_sent":
-            print(f"\n[Handoff: {e.data.source} -> {e.data.target}]")
-        elif e.type == "output" and isinstance(e.data, AgentResponse):
-            for msg in e.data.messages:
-                sender = msg.author_name or msg.role
-                for c in msg.contents:
-                    if c.type == "text":
-                        txt = parse_txt(c.text)
-                        if txt and len(txt) > 5 and "Continue" not in txt:
-                            print(f"\n{sender}: {txt}\n")
-                    elif c.type == "function_call":
-                        print(f"[System: {sender} called {c.name}({c.arguments})]")
-        elif e.type == "request_info":
-            hil.append(e)
-    return hil
-
-
-async def chat(wf: Workflow, mode: str):
-    conv_id = str(uuid.uuid4())
-    print(f"\nConnected to 42 Bank ({mode.upper()}). Session: {conv_id[:8]}")
-    print("Type 'exit' or Ctrl+C to quit.")
-
-    pending_hil: List[WorkflowEvent[HandoffAgentUserRequest]] = []
+async def chat(agent: WorkflowAgent, mode: str):
+    thread = agent.get_new_thread()
+    # AgentThread doesn't have a public .id attribute in all versions,
+    # use a local identifier for display if service_thread_id is missing.
+    display_id = thread.service_thread_id or uuid.uuid4().hex[:8]
+    print(f"\nConnected to 42 Bank ({mode.upper()}). Session: {display_id}")
+    print("Type 'exit', 'quit' or use Ctrl+C to quit.")
 
     while True:
         try:
-            label = "You (reply): " if pending_hil else "You: "
-            prompt = input(label).strip()
+            prompt = input("You: ").strip()
             if not prompt or prompt.lower() in ["exit", "quit"]:
                 break
 
             print("[Thinking...]")
-            if not pending_hil:
-                # Use a consistent conversation_id for memory
-                events = [
-                    ev
-                    async for ev in wf.run(prompt, conversation_id=conv_id, stream=True)
-                ]
-            else:
-                resps = {
-                    req.request_id: HandoffAgentUserRequest.create_response(prompt)
-                    for req in pending_hil
-                }
-                events = await wf.run(responses=resps, conversation_id=conv_id)
+            # WorkflowAgent.run() maintains state via the thread and internal workflow session
+            response = await agent.run(prompt, thread=thread)
 
-            pending_hil = handle_events(events)
+            for msg in response.messages:
+                sender = msg.author_name or msg.role
+                for c in msg.contents:
+                    if c.type == "text":
+                        txt = parse_txt(c.text)
+                        if txt and len(txt) > 2 and "Continue" not in txt:
+                            print(f"\n{sender}: {txt}\n")
+                    elif c.type == "function_call":
+                        if c.name == WorkflowAgent.REQUEST_INFO_FUNCTION_NAME:
+                            # This is a HIL request from the workflow
+                            pass
+                        else:
+                            print(f"[System: {sender} called {c.name}({c.arguments})]")
 
         except EOFError, KeyboardInterrupt:
             print("\nExiting...")
             break
         except Exception as err:
             print(f"Error: {err}")
-            pending_hil = []
 
 
 def run():
@@ -120,7 +89,14 @@ def run():
             if args.bootstrap:
                 return
 
-        user = args.user or input("User (alice/bob): ").strip().lower()
+        user = args.user
+        if not user:
+            try:
+                user = input("User (alice/bob): ").strip().lower()
+            except EOFError, KeyboardInterrupt:
+                print("\nExiting...")
+                return
+
         ident, ledger = IdentityManager(), LedgerEngine()
         token = ident.get_token(user)
         if not token:
@@ -132,12 +108,17 @@ def run():
             ledger.register_user(token, user, pk.hex())
 
         wf = create_banking_workflow(ledger, ident, user, token, mode=args.mode)
+
         if args.devui:
             from agent_framework.devui import serve
 
+            print(f"\nLaunching DevUI for {user.capitalize()} on port 8081...")
             serve(entities=[wf], auto_open=True, port=8081)
         else:
-            asyncio.run(chat(wf, args.mode))
+            # Use WorkflowAgent for persistent memory within a session
+            agent = wf.as_agent(name="BankingWorkflowAgent")
+            asyncio.run(chat(agent, args.mode))
+
     except EOFError, KeyboardInterrupt:
         print("\nExiting...")
         sys.exit(0)
