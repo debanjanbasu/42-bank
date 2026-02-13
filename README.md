@@ -27,8 +27,11 @@
 
 ### 2. Setup
 ```bash
-# Start local model
-foundry model run qwen2.5-0.5b
+# Configure environment variables
+cp .env.example .env
+
+# Start local model (e.g. 14b or 1.5b)
+foundry model run qwen2.5-14b
 
 # Initialize identities and ledger
 uv run bootstrap.py
