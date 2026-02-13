@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.env
+
+# Project Data (Sensitive keys and local DB)
+data/
+
+# OS specific
+.DS_Store
+Thumbs.db
