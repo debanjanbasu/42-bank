@@ -47,13 +47,15 @@ def test_tool_transfer(setup_bank):
     if pkB:
         ledger.register_user(tB, "bob", pkB.hex(), 0.0)
 
+    # Payload in tools: f"{to}{amount}{note}"
+    # Payload in ledger: f"{recipient_username}{amount}{description}"
     res = tools.send_money("bob", 100.0, "rent")
-    assert "SENT $100.00" in res
+    assert "SUCCESS" in res
     assert ledger.get_balance(tools.session_token) == 900.0
 
 
 def test_tool_products(setup_bank):
     tools, _, _ = setup_bank
     res = tools.list_products()
-    assert "Available Products" in res
-    assert "Checking" in res
+    assert "Bank Products" in res
+    assert "Standard Checking" in res

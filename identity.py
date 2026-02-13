@@ -57,6 +57,8 @@ class IdentityManager:
     ) -> bool:
         """Verifies a PQC signature."""
         try:
-            return verify(public_key, message, signature) is None
+            # Returns True on success, raises or returns False on failure
+            res = verify(public_key, message, signature)
+            return bool(res)
         except Exception:
             return False

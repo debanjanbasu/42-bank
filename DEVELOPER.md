@@ -5,7 +5,7 @@ Welcome to the 42 Bank development guide. This platform leverages the **Microsof
 ## 🛠️ Local Environment Setup
 
 ### 1. Model Hosting
-The platform is optimized for the **Qwen 2.5** family. For local development, we recommend the 1.5b model.
+The platform is optimized for the **Qwen 2.5** family. For local development, we recommend the 1.5b model for a balance of reasoning and performance.
 ```bash
 foundry model run qwen2.5-1.5b
 ```
@@ -37,7 +37,7 @@ uv run main.py --user alice --devui
 
 The platform uses a **Modular Handoff Orchestration** pattern. Agents are decoupled in the `bank_agents/` directory:
 
-1. **TriageAgent**: The "Receptionist". It only handles routing based on user intent.
+1. **TriageAgent**: The "Receptionist". It handles routing based on user intent.
 2. **TransactionAgent**: Specialist for money movement (`send_money`, `request_money`, `approve_payment`).
 3. **InquiryAgent**: Specialist for account data (`check_balance`, `view_history`, `list_my_accounts`).
 4. **AdvisorAgent**: Financial consultant for bank products (`list_products`) and account opening (`open_new_account`).

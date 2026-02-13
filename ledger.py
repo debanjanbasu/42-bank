@@ -101,9 +101,7 @@ class LedgerEngine:
             row = conn.execute(
                 "SELECT data FROM users WHERE token = ?", (token,)
             ).fetchone()
-            if row:
-                return UserAccount.model_validate_json(row[0])
-        return None
+            return UserAccount.model_validate_json(row[0]) if row else None
 
     def _save_user(self, user: Optional[UserAccount]) -> None:
         if not user:
@@ -156,13 +154,13 @@ class LedgerEngine:
         if not user or not user.public_key:
             return False
         try:
-            return (
+            # Returns True on success
+            return bool(
                 pq_verify(
                     bytes.fromhex(user.public_key),
                     message.encode(),
                     bytes.fromhex(signature_hex),
                 )
-                is None
             )
         except Exception:
             return False

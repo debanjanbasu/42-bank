@@ -17,7 +17,7 @@
 - **Security**: NIST PQC (ML-DSA-44) via `pqcrypto`
 - **Database**: SQLite (Production-ready interface for Cosmos DB)
 - **Runtime**: Python 3.14 + `uv`
-- **Inference**: Azure AI Foundry / Foundry Local
+- **Testing**: `pytest` + `pytest-asyncio`
 
 ## 🚦 Quick Start
 
@@ -30,7 +30,7 @@
 # Configure environment
 cp .env.example .env
 
-# Start local model (Recommended: 1.5b for speed)
+# Start local model (Recommended: 1.5b for performance)
 foundry model run qwen2.5-1.5b
 
 # Initialize quantum-safe identities and ledger
