@@ -23,13 +23,26 @@ def parse_txt(content: Any) -> str:
         return ""
     
     if isinstance(content, str):
-        return content.strip()
+        content = content.strip()
+        # Filter out JSON-like structures
+        if content.startswith("[{") or content.startswith("{"):
+            return ""
+        return content
     
     if isinstance(content, dict):
+        # Skip handoff and function call dicts
+        if content.get("type") in ["handoff", "function_call"]:
+            return ""
         return content.get("text", "")
     
     if isinstance(content, list):
-        return " ".join(parse_txt(item) for item in content if item)
+        texts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                texts.append(item.get("text", ""))
+            elif isinstance(item, str):
+                texts.append(item)
+        return " ".join(t for t in texts if t and not t.startswith("[{"))
     
     return str(content)
 
@@ -40,25 +53,31 @@ def handle_events(
     hil: List[WorkflowEvent[HandoffAgentUserRequest]] = []
     for e in events:
         if e.type == "handoff_sent":
-            print(f"\n[Handoff: {e.data.source} -> {e.data.target}]")
+            source = e.data.source if hasattr(e.data, 'source') else 'Agent'
+            target = e.data.target if hasattr(e.data, 'target') else 'Agent'
+            print(f"[Handoff: {source} → {target}]")
         elif e.type == "output" and isinstance(e.data, AgentResponse):
             for msg in e.data.messages:
                 sender = msg.author_name or msg.role
                 for c in msg.contents:
                     if c.type == "text_reasoning":
-                        print(f"[{sender} Thinking: {c.text}]")
+                        # Skip reasoning output for cleaner UI
+                        pass
                     elif c.type == "text":
                         txt = parse_txt(c.text).strip()
-                        if txt and "Continue assisting" not in txt:
+                        if txt and "Continue assisting" not in txt and "handoff" not in txt.lower():
                             print(f"\n{sender}: {txt}\n")
                     elif c.type == "function_call":
-                        print(f"[System: {sender} called {c.name}({c.arguments})]")
+                        # Only show important function calls
+                        if c.name not in ["request_info"]:
+                            print(f"[Calling: {c.name}]")
         elif e.type == "request_info" and isinstance(e.data, HandoffAgentUserRequest):
+            # Human in loop request - show the agent's message
             for msg in e.data.agent_response.messages:
                 for c in msg.contents:
                     if c.type == "text":
                         txt = parse_txt(c.text).strip()
-                        if txt:
+                        if txt and not txt.startswith("[{"):
                             print(f"\n{msg.author_name or msg.role}: {txt}\n")
             hil.append(e)
     return hil
