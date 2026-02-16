@@ -9,7 +9,7 @@ import uuid
 from typing import List, Dict, Union, Any, Optional
 from identity import IdentityManager
 from ledger import LedgerEngine
-from agents import create_banking_workflow, discover_foundry_local_endpoint
+from agents import create_banking_workflow, get_foundry_local_endpoint
 from bootstrap import bootstrap
 from agent_framework import WorkflowEvent, AgentResponse
 from agent_framework.orchestrations import HandoffAgentUserRequest
@@ -18,37 +18,19 @@ from agent_framework._workflows._agent import WorkflowAgent
 
 
 def parse_txt(content: Any) -> str:
-    """Recursively extracts clean text from complex nested AI outputs."""
+    """Extract clean text from agent outputs."""
     if content is None:
         return ""
-
+    
     if isinstance(content, str):
-        content = content.strip()
-        content = re.sub(r"```json\s*(.*?)\s*```", r"\1", content, flags=re.DOTALL)
-
-        if content.startswith("[") or content.startswith("{"):
-            try:
-                sanitized = content.replace("\\n", "\n").replace('\\"', '"')
-                data = json.loads(sanitized)
-                return parse_txt(data)
-            except:
-                text_match = re.search(
-                    r"['\"]text['\"]:\s*['\"](.*?)['\"]", content, flags=re.DOTALL
-                )
-                if text_match:
-                    return text_match.group(1)
-        return content
-
+        return content.strip()
+    
     if isinstance(content, dict):
-        if "text" in content:
-            return parse_txt(content["text"])
-        if content.get("type") == "text":
-            return parse_txt(content.get("text", ""))
-        return ""
-
+        return content.get("text", "")
+    
     if isinstance(content, list):
         return " ".join(parse_txt(item) for item in content if item)
-
+    
     return str(content)
 
 
@@ -67,17 +49,8 @@ def handle_events(
                         print(f"[{sender} Thinking: {c.text}]")
                     elif c.type == "text":
                         txt = parse_txt(c.text).strip()
-                        txt = re.sub(
-                            r"\[?\{'type': 'text', 'text': ['\"](.*?)['\"]\}\]?",
-                            r"\1",
-                            txt,
-                        )
-                        if (
-                            txt.strip()
-                            and not txt.startswith("[{")
-                            and not "Continue assisting" in txt
-                        ):
-                            print(f"\n{sender}: {txt.strip()}\n")
+                        if txt and "Continue assisting" not in txt:
+                            print(f"\n{sender}: {txt}\n")
                     elif c.type == "function_call":
                         print(f"[System: {sender} called {c.name}({c.arguments})]")
         elif e.type == "request_info" and isinstance(e.data, HandoffAgentUserRequest):
@@ -91,7 +64,7 @@ def handle_events(
     return hil
 
 
-async def chat(agent: WorkflowAgent, mode: str, endpoint: str = None):
+async def chat(agent: Agent, mode: str, endpoint: Optional[str] = None):
     thread = agent.get_new_thread()
     display_id = thread.service_thread_id or uuid.uuid4().hex[:8]
     print(f"\nConnected to 42 Bank ({mode.upper()}). Session: {display_id}")
@@ -106,7 +79,7 @@ async def chat(agent: WorkflowAgent, mode: str, endpoint: str = None):
             label = "You (reply): " if pending_hil else "You: "
             try:
                 prompt = input(label).strip()
-            except EOFError, KeyboardInterrupt:
+            except (EOFError, KeyboardInterrupt):
                 print("\nExiting...")
                 break
 
@@ -116,25 +89,12 @@ async def chat(agent: WorkflowAgent, mode: str, endpoint: str = None):
                 break
 
             print("[Processing...]")
-            if not pending_hil:
-                response = await agent.run(prompt, thread=thread)
-                events = [
-                    WorkflowEvent(
-                        type="output", data=response, source_executor_id=agent.id
-                    )
-                ]
-            else:
-                resps = {
-                    req.request_id: HandoffAgentUserRequest.create_response(prompt)
-                    for req in pending_hil
-                }
-                response = await agent.run(prompt, thread=thread)
-                events = [
-                    WorkflowEvent(
-                        type="output", data=response, source_executor_id=agent.id
-                    )
-                ]
-
+            response = await agent.run(prompt, thread=thread)
+            events = [
+                WorkflowEvent(
+                    type="output", data=response, source_executor_id=agent.id
+                )
+            ]
             pending_hil = handle_events(events)
 
         except Exception as err:
@@ -190,8 +150,8 @@ def run():
     try:
         if args.bootstrap or not os.path.exists("data/bank.db"):
             bootstrap()
-            if args.bootstrap:
-                return
+        if args.bootstrap:
+            return
 
         if args.a2a:
             run_a2a(args)
@@ -218,7 +178,11 @@ def run():
         if args.mode == "local":
             endpoint = os.getenv("FOUNDRY_LOCAL_ENDPOINT")
             if not endpoint:
-                endpoint = discover_foundry_local_endpoint()
+                try:
+                    endpoint = get_foundry_local_endpoint()
+                except RuntimeError as e:
+                    print(f"Error: {e}")
+                    return
             if not endpoint:
                 print(
                     "Error: Foundry Local not found. Run 'foundry model run <model>' first."
@@ -235,7 +199,7 @@ def run():
         else:
             agent = wf.as_agent(name="BankingWorkflowAgent")
             asyncio.run(chat(agent, args.mode, endpoint))
-    except EOFError, KeyboardInterrupt:
+    except (EOFError, KeyboardInterrupt):
         print("\nExiting...")
         sys.exit(0)
 

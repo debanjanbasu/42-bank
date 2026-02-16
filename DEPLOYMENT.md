@@ -1,62 +1,155 @@
 # Deployment Guide: Azure AI Foundry
 
-This guide covers deploying 42 Bank agents to Azure AI Foundry using A2A and MCP protocols.
+This guide covers deploying 42 Bank to Azure AI Foundry.
 
-## Architecture Overview
+## Overview
+
+**Primary Deployment**: Deploy as a hosted agent directly on Azure AI Foundry  
+**Secondary Options**: A2A/MCP servers for external agent integration
+
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        Azure AI Foundry                              │
-│  ┌────────────────┐                    ┌────────────────────────┐  │
-│  │ Foundry Agent  │                    │  Foundry Agent         │  │
-│  │ (with A2ATool) │                    │  (with MCP Tool)       │  │
-│  └───────┬────────┘                    └───────────┬────────────┘  │
-│          │ A2A Protocol                            │ MCP Protocol   │
-│          ▼                                         ▼                │
+│                                                                       │
 │  ┌──────────────────────────────────────────────────────────────┐  │
-│  │              42 Bank Services (Azure Functions)               │  │
-│  │  ┌─────────────────┐           ┌─────────────────────────┐   │  │
-│  │  │ A2A Server      │           │ MCP Server              │   │  │
-│  │  │ :8000           │           │ :8001                   │   │  │
-│  │  │ /a2a/{agent}    │           │ /sse, /messages         │   │  │
-│  │  └────────┬────────┘           └────────────┬────────────┘   │  │
-│  │           │                                  │                │  │
-│  │           ▼                                  ▼                │  │
-│  │  ┌─────────────────────────────────────────────────────┐     │  │
-│  │  │ SQLite/Cosmos DB │ Identity (ML-DSA-44)             │     │  │
-│  │  └─────────────────────────────────────────────────────┘     │  │
+│  │             42 Bank Hosted Agent (Primary)                    │  │
+│  │  ┌─────────────────────────────────────────────────────────┐ │  │
+│  │  │ ChatAgent + 9 Banking Tools                             │ │  │
+│  │  │ Exposed via Responses API                               │ │  │
+│  │  └─────────────────────────────────────────────────────────┘ │  │
+│  │                           │                                   │  │
+│  │                           ▼                                   │  │
+│  │  ┌──────────────────────────────────────────────────────┐   │  │
+│  │  │ Phi-4-mini │ Azure Identity │ Storage                │   │  │
+│  │  └──────────────────────────────────────────────────────┘   │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
+
+External Integration Options:
+┌─────────────────┐          ┌─────────────────┐
+│ A2A Server      │          │ MCP Server      │
+│ (Azure Function)│          │ (Azure Function)│
+└─────────────────┘          └─────────────────┘
 ```
 
 ---
 
-## Option 1: A2A Endpoint for Foundry Agents
+## Primary Deployment: Hosted Agent
 
-Your A2A server becomes an endpoint that Foundry agents can call using `A2ATool`.
+Deploy 42 Bank directly to Azure AI Foundry as a containerized hosted agent.
 
-### Step 1: Deploy A2A Server to Azure Functions
+## Primary Deployment: Hosted Agent
+
+Deploy 42 Bank directly to Azure AI Foundry as a containerized hosted agent.
+
+### Step 1: Build Container
 
 ```bash
-# Use A2A host configuration
+# Build for Azure AI Foundry (MUST be linux/amd64)
+docker buildx build --platform linux/amd64 -t 42-bank-agent .
+
+# Test locally first
+uv run hosted_agent.py
+# Then test: curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "Check balance"}'
+```
+
+### Step 2: Push to Azure Container Registry
+
+```bash
+# Login to your ACR
+az acr login --name <your-acr-name>
+
+# Tag and push
+docker tag 42-bank-agent <your-acr-name>.azurecr.io/42-bank-agent:latest
+docker push <your-acr-name>.azurecr.io/42-bank-agent:latest
+```
+
+### Step 3: Deploy to Azure AI Foundry
+
+**Option A: Azure Portal**
+
+1. Go to **Azure AI Foundry Portal** → Your Project
+2. Navigate to **Agents** → **Create Agent**
+3. Select **Container-based agent**
+4. Configure:
+   - **Container image**: `<your-acr>.azurecr.io/42-bank-agent:latest`
+   - **Environment variables**:
+     - `AZURE_AI_PROJECT_ENDPOINT`: Your project endpoint
+     - `AZURE_AI_MODEL_DEPLOYMENT_NAME`: `Phi-4-mini`
+     - `BANK_USER`: `alice`
+5. Enable **Managed Identity** for Azure services access
+6. Deploy
+
+**Option B: Azure Developer CLI**
+
+```bash
+# Initialize with template
+azd init -t https://github.com/Azure-Samples/azd-ai-starter-basic
+
+# Configure agent
+azd ai agent init -m agent.yaml
+
+# Deploy
+azd up
+```
+
+### Step 4: Test Deployed Agent
+
+```bash
+# Get agent endpoint from Azure portal
+AGENT_ENDPOINT="https://<your-agent>.azurewebsites.net"
+
+# Test
+curl -X POST $AGENT_ENDPOINT/responses \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $(az account get-access-token --query accessToken -o tsv)" \
+  -d '{"input": "What is my checking balance?"}'
+```
+
+### Environment Variables for Hosted Agent
+
+Set these in Azure AI Foundry portal or Dockerfile:
+
+```env
+# Required
+AZURE_AI_PROJECT_ENDPOINT=https://<project>.services.ai.azure.com/api/projects/<name>
+AZURE_AI_MODEL_DEPLOYMENT_NAME=Phi-4-mini
+BANK_USER=alice
+
+# Optional (defaults shown)
+# Storage backend, managed identity, etc.
+```
+
+---
+
+## Secondary Option: A2A Server Integration
+
+Use when integrating with other Foundry agents via A2A protocol.
+
+### Deploy A2A Server to Azure Functions
+
+```bash
+# Configure host for A2A
 cp host.a2a.json host.json
 
 # Deploy
 func azure functionapp publish <your-function-app>
 ```
 
-### Step 2: Create A2A Connection in Foundry Portal
+### Connect from Foundry Agent
 
 1. Go to **Foundry Portal** → **Tools** → **Connect tool**
-2. Select **Custom** → **Agent2Agent (A2A)**
+2. Select **Agent2Agent (A2A)**
 3. Configure:
-   - **Name**: `42-bank-agents`
-   - **A2A Agent Endpoint**: `https://<your-app>.azurewebsites.net/a2a/triage`
-   - **Authentication**: 
-     - Key-based: Set `x-api-key` header with your API key
-     - Or Microsoft Entra ID (Managed Identity)
+   - **Name**: `42-bank-a2a`
+   - **Endpoint**: `https://<your-app>.azurewebsites.net/a2a/triage`
+   - **Authentication**: Managed Identity or API key
 
-### Step 3: Create Foundry Agent with A2ATool
+### Use in Agent Code
+
+### Use in Agent Code
 
 ```python
 import os
@@ -65,126 +158,119 @@ from azure.ai.projects import AIProjectClient
 from azure.ai.projects.models import PromptAgentDefinition, A2ATool
 
 with AIProjectClient(
-    endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
     credential=DefaultAzureCredential()
 ) as project:
-    # Get the A2A connection
-    a2a_connection = project.connections.get("42-bank-agents")
+    a2a_connection = project.connections.get("42-bank-a2a")
     
-    # Create agent with A2A tool
     agent = project.agents.create_version(
         agent_name="BankingAssistant",
         definition=PromptAgentDefinition(
-            model=os.environ["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
-            instructions="You are a banking assistant. Use the A2A tool to handle banking queries.",
+            model="Phi-4-mini",
+            instructions="You are a banking assistant. Use A2A tool for banking operations.",
             tools=[A2ATool(project_connection_id=a2a_connection.id)],
         ),
     )
-    
-    print(f"Agent created: {agent.name} v{agent.version}")
-```
-
-### Environment Variables
-
-```env
-FOUNDRY_PROJECT_ENDPOINT=https://<your-project>.api.azureml.ms
-FOUNDRY_MODEL_DEPLOYMENT_NAME=Phi-4-mini
-A2A_PROJECT_CONNECTION_NAME=42-bank-agents
 ```
 
 ---
 
-## Option 2: MCP Server for Tool Integration
+## Secondary Option: MCP Server Integration
 
-Expose banking tools via MCP for Foundry agents to use directly.
+Use when exposing banking tools via MCP for external clients.
 
-### Step 1: Deploy MCP Server
-
-```bash
-# Use MCP host configuration  
-cp host.json host.json.backup
-# host.json is already configured for MCP stdio mode
-
-func azure functionapp publish <your-function-app>
-```
-
-### Step 2: Configure MCP in Foundry
-
-Add the MCP server connection in Foundry portal:
-1. **Tools** → **Connect tool** → **MCP**
-2. Point to your Function App endpoint
-
-### MCP Tools Available
-
-| Tool | Description |
-|------|-------------|
-| `check_balance` | View account balance |
-| `view_history` | View transaction history |
-| `send_money` | Transfer funds to another user |
-| `request_money` | Request payment |
-| `approve_payment` | Approve pending requests |
-| `list_products` | List bank products |
-| `open_new_account` | Open new account |
-
----
-
-## Authentication
-
-### Key-Based (Simple)
+### Deploy MCP Server
 
 ```bash
-# Set API key when starting server
-A2A_API_KEY=your-secret-key python main.py --a2a --require-auth
+# Deploy as Azure Function
+func azure functionapp publish <your-mcp-function-app>
 ```
 
-Configure in Foundry connection:
-- **Credential name**: `x-api-key`
-- **Credential value**: `<your-secret-key>`
+### MCP Client Integration
 
-### Microsoft Entra ID (Recommended for Production)
+**HTTP Mode:**
+```bash
+# Connect to MCP server
+curl http://<your-app>.azurewebsites.net/tools
+```
 
-1. Enable Managed Identity on your Function App
-2. Configure A2A connection with **Agent Identity** or **Project Managed Identity**
-3. No secrets to manage - Azure handles token acquisition
+**stdio Mode (Claude Desktop, etc.):**
+```json
+{
+  "mcpServers": {
+    "42-bank": {
+      "command": "python",
+      "args": ["mcp_server.py", "alice", "--stdio"]
+    }
+  }
+}
+```
 
-### OAuth Identity Passthrough
-
-For per-user authentication (each user accesses their own accounts):
-1. Configure OAuth in Foundry portal
-2. Users consent on first interaction
-3. Agent acts on behalf of each user
+See [DEVELOPER.md](DEVELOPER.md) for detailed MCP integration examples.
 
 ---
 
 ## Model Configuration
 
-### Local Development (Foundry Local)
+### Deploy Phi-4-mini Model
+
+In Azure AI Foundry portal:
+1. Navigate to **Models** → **Deploy model**
+2. Select **Phi-4-mini** from model catalog
+3. Configure:
+   - **Deployment name**: `Phi-4-mini`
+   - **Instance type**: Choose based on load requirements
+   - **Scale settings**: Configure auto-scaling
+
+### Local Development
 
 ```bash
+# Start Phi-4-mini locally with Foundry Local
 foundry model run Phi-4-mini-instruct-generic-gpu:5
 ```
 
-### Azure AI Foundry (Hosted)
+---
 
-Deploy **Phi-4-mini** model in your Foundry project:
-- Cost-efficient for banking tasks
-- Good balance of performance and latency
+## Authentication & Security
 
-```env
-AZURE_AI_MODEL_DEPLOYMENT_NAME=Phi-4-mini
+### Managed Identity (Recommended)
+
+Enable on your Azure resources:
+```bash
+az webapp identity assign --name <app-name> --resource-group <rg>
 ```
+
+No secrets to manage - Azure handles authentication automatically.
+
+### API Key (Simple)
+
+For A2A/MCP servers:
+```bash
+# Set in Azure Function App Configuration
+A2A_API_KEY=<your-secret-key>
+```
+
+### OAuth (Per-User)
+
+For multi-user scenarios where each user accesses their own accounts:
+1. Configure OAuth provider in Azure portal
+2. Users consent on first use
+3. Agent operates with user's permissions
 
 ---
 
 ## Production Checklist
 
-- [ ] Deploy to Azure Functions Flex Consumption plan
-- [ ] Enable Managed Identity authentication
-- [ ] Configure Cosmos DB for production storage
+- [ ] Deploy Phi-4-mini model in Azure AI Foundry
+- [ ] Build and push container to ACR (linux/amd64)
+- [ ] Deploy hosted agent with managed identity
+- [ ] Configure environment variables
 - [ ] Set up Application Insights for monitoring
-- [ ] Enable Change Feed for audit logging
-- [ ] Configure CORS for your client applications
-- [ ] Set up API rate limiting
+- [ ] Configure Cosmos DB for production storage (optional)
+- [ ] Enable auto-scaling based on load
+- [ ] Set up CI/CD pipeline
+- [ ] Test agent endpoints
+- [ ] Configure CORS if needed
 
 ---
 
@@ -192,15 +278,17 @@ AZURE_AI_MODEL_DEPLOYMENT_NAME=Phi-4-mini
 
 | Issue | Resolution |
 |-------|------------|
-| 401 Unauthorized | Check API key or Managed Identity configuration |
-| Connection not found | Verify `A2A_PROJECT_CONNECTION_NAME` matches portal |
-| Agent doesn't invoke tool | Ensure prompt requires the remote agent |
-| Timeout errors | Increase timeout in connection settings |
+| Container fails to start | Check logs in Azure portal. Verify environment variables are set |
+| Authentication errors | Ensure managed identity is enabled and has correct permissions |
+| Model not found | Deploy Phi-4-mini model in Azure AI Foundry project |
+| Slow responses | Check model instance type and auto-scaling settings |
+| Database errors | Run bootstrap.py to initialize database, or configure Cosmos DB |
 
 ---
 
 ## Related Documentation
 
-- [A2A Tool in Foundry](https://learn.microsoft.com/azure/ai-foundry/agents/how-to/tools/agent-to-agent)
-- [A2A Authentication](https://learn.microsoft.com/azure/ai-foundry/agents/concepts/agent-to-agent-authentication)
-- [MCP Servers on Azure Functions](https://learn.microsoft.com/azure/azure-functions/self-hosted-mcp-servers)
+- [Azure AI Foundry Hosted Agents](https://learn.microsoft.com/azure/ai-foundry/agents)
+- [A2A Protocol](https://learn.microsoft.com/azure/ai-foundry/agents/how-to/tools/agent-to-agent)
+- [MCP on Azure Functions](https://learn.microsoft.com/azure/azure-functions/self-hosted-mcp-servers)
+- [Phi-4 Mini Model](https://learn.microsoft.com/azure/ai-foundry/models/phi-4)

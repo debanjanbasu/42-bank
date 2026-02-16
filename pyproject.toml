@@ -1,25 +1,28 @@
 [project]
 name = "42-bank"
 version = "0.1.0"
-description = "A2A and MCP compliant banking agents for Microsoft Foundry"
+description = "Managed Banking Agents for Azure AI Agent Service"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "agent-framework",
+    "azure-ai-projects",
     "azure-identity",
     "cryptography",
     "httpx",
-    "mcp",
     "pqcrypto",
     "pydantic",
     "python-dotenv",
-    "starlette",
-    "uvicorn",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio"]
-hosted = ["azure-ai-agentserver-agentframework"]
 
 [tool.uv]
 prerelease = "allow"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+]

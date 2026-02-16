@@ -1,14 +1,15 @@
-# 42 Bank: A2A/MCP Compliant Quantum-Safe Agentic Platform
+# 42 Bank: Azure AI Banking Agent Platform
 
-42 Bank is a next-generation banking prototype built with **Microsoft Agent Framework** and **Azure AI Foundry**. It features multi-agent orchestration, A2A/MCP protocol compliance, and post-quantum cryptographic security.
+42 Bank is a next-generation banking platform built with **Microsoft Agent Framework** and deployed on **Azure AI Foundry**. It features multi-agent orchestration, A2A/MCP protocol support, and post-quantum cryptographic security.
 
 ## Key Features
 
-- **Azure AI Foundry Hosted Agents**: Deploy as managed containerized agents
-- **A2A Protocol (v0.3.0)**: Expose agents via standardized Agent-to-Agent protocol
-- **MCP (Model Context Protocol)**: Banking tools exposed as MCP resources
-- **Multi-Agent Handoff**: 5 specialized agents collaborate autonomously
-- **Post-Quantum Cryptography**: ML-DSA-44 (Dilithium) signatures
+- **Azure AI Foundry Deployment**: Deploy directly as managed agents on Azure AI
+- **Multi-Agent Orchestration**: 5 specialized agents collaborate autonomously  
+- **A2A Protocol Support**: Expose agents via Agent-to-Agent protocol for external integration
+- **MCP Server Support**: Banking tools accessible via Model Context Protocol
+- **Post-Quantum Cryptography**: ML-DSA-44 (Dilithium) digital signatures
+- **Phi-4 Mini Model**: Cost-efficient, high-performance AI model
 
 ## Architecture
 
@@ -17,16 +18,16 @@
 │                     Azure AI Foundry                             │
 ├─────────────────────────────────────────────────────────────────┤
 │  ┌────────────────────────────────────────────────────────────┐ │
-│  │                Hosted Agent Container                       │ │
-│  │  ┌────────────────────────────────────────────────────────┐│ │
-│  │  │ BankingAgent (ChatAgent + 9 Tools)                     ││ │
-│  │  │ - check_balance    - send_money    - list_products     ││ │
-│  │  │ - view_history     - request_money - open_new_account  ││ │
-│  │  │ - list_accounts    - approve_payment                    ││ │
-│  │  └────────────────────────────────────────────────────────┘│ │
+│  │         Hosted Agent (Primary Deployment)                  │ │
+│  │  ┌──────────────────────────────────────────────────────┐  │ │
+│  │  │ BankingAgent (ChatAgent + 9 Banking Tools)           │  │ │
+│  │  │  • check_balance    • send_money    • list_products  │  │ │
+│  │  │  • view_history     • request_money • open_account   │  │ │
+│  │  │  • list_accounts    • approve_payment                │  │ │
+│  │  └──────────────────────────────────────────────────────┘  │ │
 │  │                          │                                  │ │
 │  │  ┌───────────────────────▼──────────────────────────────┐  │ │
-│  │  │ Hosting Adapter (Responses API v1)                   │  │ │
+│  │  │ Hosting Adapter (Responses API)                      │  │ │
 │  │  └──────────────────────────────────────────────────────┘  │ │
 │  └────────────────────────────────────────────────────────────┘ │
 │                              │                                   │
@@ -35,14 +36,20 @@
 │  │ Phi-4-mini Model │ Azure Identity │ SQLite/Cosmos DB    │   │
 │  └──────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
+
+Secondary Integration Options:
+┌──────────────┐              ┌──────────────┐
+│ A2A Server   │              │ MCP Server   │
+│ (Port 8000)  │              │ (Port 8001)  │
+└──────────────┘              └──────────────┘
 ```
 
 ## Quick Start
 
-### Requirements
-- [uv](https://github.com/astral-sh/uv)
-- [Foundry Local](https://learn.microsoft.com/azure/ai-foundry/foundry-local/get-started)
-- [Docker](https://docs.docker.com/get-docker/)
+### Prerequisites
+- [uv](https://github.com/astral-sh/uv) - Python package manager
+- [Foundry Local](https://learn.microsoft.com/azure/ai-foundry/foundry-local/get-started) - For local development
+- [Docker](https://docs.docker.com/get-docker/) - For container builds
 
 ### Local Development
 
@@ -60,10 +67,10 @@ uv run bootstrap.py
 uv run main.py --user alice
 ```
 
-### Local Agent Testing (Hosting Adapter)
+### Test Hosted Agent Locally
 
 ```bash
-# Test hosted agent locally on http://localhost:8088
+# Run the hosted agent on http://localhost:8088
 uv run hosted_agent.py
 
 # Test with curl
@@ -72,9 +79,28 @@ curl -X POST http://localhost:8088/responses \
   -d '{"input": "What is my checking balance?"}'
 ```
 
-## Deployment to Azure AI Foundry
+## Deploy to Azure AI Foundry
 
-### Option 1: Azure Developer CLI (Recommended)
+### Primary Deployment Method
+
+Deploy the banking agent directly to Azure AI Foundry as a hosted agent:
+
+```bash
+# Build container for Azure AI Foundry (MUST be linux/amd64)
+docker buildx build --platform linux/amd64 -t 42-bank-agent .
+
+# Push to Azure Container Registry
+az acr login --name <your-acr>
+docker tag 42-bank-agent <your-acr>.azurecr.io/42-bank-agent:latest
+docker push <your-acr>.azurecr.io/42-bank-agent:latest
+
+# Deploy to Azure AI Foundry
+# Configure in Azure portal or use SDK (see DEPLOYMENT.md)
+```
+
+> **Important**: Azure AI Foundry requires `linux/amd64` containers. On Apple Silicon, use `docker buildx` with the `--platform` flag.
+
+### Alternative Deployment: Azure Developer CLI
 
 ```bash
 # Initialize with Foundry starter template
@@ -87,35 +113,34 @@ azd ai agent init -m agent.yaml
 azd up
 ```
 
-### Option 2: Manual Container Deployment
+See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed instructions and configuration options.
+
+## Secondary Integration Options
+
+### A2A Server (Agent-to-Agent Protocol)
+
+For external agent integration via A2A protocol:
 
 ```bash
-# Build container for Foundry (MUST be linux/amd64)
-# On ARM64 Macs, use buildx for cross-platform build:
-docker buildx build --platform linux/amd64 -t 42-bank-agent .
-
-# Push to Azure Container Registry
-az acr login --name <your-acr>
-docker tag 42-bank-agent <your-acr>.azurecr.io/42-bank-agent:latest
-docker push <your-acr>.azurecr.io/42-bank-agent:latest
-
-# Create hosted agent via SDK
-python scripts/create_hosted_agent.py
-```
-
-> **Note**: Azure AI Foundry Hosted Agents only support `linux/amd64`. On Apple Silicon Macs, run locally with `uv run hosted_agent.py` (no Docker needed for local testing).
-
-### Option 3: A2A/MCP Endpoints (Azure Functions)
-
-For external agent integration:
-
-```bash
-# A2A Server (port 8000)
+# Start A2A server (port 8000)
 uv run main.py --a2a --user alice
-
-# MCP Server (port 8001)
-uv run main.py --mcp --user alice
 ```
+
+The A2A server exposes banking agents with discovery, handoff, and streaming capabilities. See [DEPLOYMENT.md](DEPLOYMENT.md) for integration details.
+
+### MCP Server (Model Context Protocol)
+
+Expose banking tools via MCP for integration with MCP-compatible clients:
+
+```bash
+# HTTP mode (port 8001)
+uv run main.py --mcp --user alice
+
+# stdio mode (for Claude Desktop, etc.)
+uv run main.py --mcp --stdio --user alice
+```
+
+See [DEVELOPER.md](DEVELOPER.md) for MCP client integration examples.
 
 ## Project Structure
 
@@ -151,15 +176,15 @@ uv run main.py --mcp --user alice
 ## Environment Variables
 
 ```env
-# Required for Hosted Agents
+# Azure AI Foundry (Required for Production)
 AZURE_AI_PROJECT_ENDPOINT=https://<project>.services.ai.azure.com/api/projects/<name>
 AZURE_AI_MODEL_DEPLOYMENT_NAME=Phi-4-mini
 
-# Local development
+# Local Development
 FOUNDRY_LOCAL_ENDPOINT=http://127.0.0.1:59402/v1
 MODEL_NAME=Phi-4-mini-instruct-generic-gpu:5
 
-# Banking user context
+# Banking Context
 BANK_USER=alice
 ```
 

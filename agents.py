@@ -18,6 +18,28 @@ from identity import IdentityManager
 load_dotenv()
 
 
+def create_chat_client(mode: str = "local", model_name: Optional[str] = None) -> Any:
+    """Create a chat client for local or hosted mode."""
+    if mode == "local":
+        endpoint = get_foundry_local_endpoint()
+        model_id = model_name or os.getenv("MODEL_NAME", "Phi-4-mini-instruct-generic-gpu:5")
+        return OpenAIChatClient(
+            model_id=model_id, api_key="local-dev-key", base_url=endpoint
+        )
+    else:
+        project_endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT")
+        if not project_endpoint:
+            raise ValueError("AZURE_AI_PROJECT_ENDPOINT required for hosted mode")
+        model_deployment_name = model_name or os.getenv(
+            "AZURE_AI_MODEL_DEPLOYMENT_NAME", "Phi-4-mini"
+        )
+        return AzureAIClient(
+            project_endpoint=project_endpoint,
+            model_deployment_name=model_deployment_name,
+            credential=DefaultAzureCredential(),
+        )
+
+
 class ChatClientProtocol(Protocol):
     def as_agent(
         self,
@@ -29,10 +51,7 @@ class ChatClientProtocol(Protocol):
 
 
 def get_foundry_local_endpoint() -> str:
-    """
-    Get Foundry Local endpoint from 'foundry service status' output.
-    Returns the endpoint URL or raises an error if not found.
-    """
+    """Get Foundry Local endpoint from environment or service status."""
     env_endpoint = os.getenv("FOUNDRY_LOCAL_ENDPOINT")
     if env_endpoint:
         return env_endpoint
@@ -44,16 +63,13 @@ def get_foundry_local_endpoint() -> str:
             text=True,
             timeout=5,
         )
-        output = result.stdout + result.stderr
-        match = re.search(r"http://[\d.]+:(\d+)", output)
+        match = re.search(r"http://[\d.]+:(\d+)", result.stdout + result.stderr)
         if match:
             return f"http://127.0.0.1:{match.group(1)}/v1"
     except Exception as e:
-        raise RuntimeError(f"Failed to get Foundry Local endpoint: {e}")
+        raise RuntimeError(f"Foundry Local not running. Start with: foundry model run <model>")
 
-    raise RuntimeError(
-        "Foundry Local not running. Start with: foundry model run <model>"
-    )
+    raise RuntimeError("Foundry Local not running. Start with: foundry model run <model>")
 
 
 def create_banking_workflow(
@@ -65,30 +81,7 @@ def create_banking_workflow(
     mode: str = "local",
 ) -> Workflow:
     """Creates a robust A2A banking workflow."""
-
-    client: ChatClientProtocol
-
-    if mode == "local":
-        endpoint = get_foundry_local_endpoint()
-        model_id = model_name or os.getenv(
-            "MODEL_NAME", "Phi-4-mini-instruct-generic-gpu:5"
-        )
-        client = OpenAIChatClient(
-            model_id=model_id, api_key="local-dev-key", base_url=endpoint
-        )
-    else:
-        project_endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT")
-        model_deployment_name = model_name or os.getenv(
-            "AZURE_AI_MODEL_DEPLOYMENT_NAME", "Phi-4-mini"
-        )
-        if not project_endpoint:
-            raise ValueError("AZURE_AI_PROJECT_ENDPOINT required.")
-        client = AzureAIClient(
-            project_endpoint=project_endpoint,
-            model_deployment_name=model_deployment_name,
-            credential=DefaultAzureCredential(),
-        )
-
+    client = create_chat_client(mode=mode, model_name=model_name)
     tools = BankingTools(ledger, identity, username, session_token)
 
     t_agent = triage.get_agent(client)

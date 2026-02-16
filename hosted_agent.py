@@ -1,15 +1,11 @@
 """
-42 Bank Hosted Agent - Entry point for Azure AI Foundry deployment.
+42 Bank Hosted Agent - Azure AI Foundry deployment entry point.
 
-Uses the hosting adapter (azure-ai-agentserver-agentframework) to expose
-the banking agent as a REST API compatible with Foundry Responses API.
+Exposes the banking agent via the Responses API for Azure AI Foundry.
 
 Usage:
-    # Local testing (starts server on localhost:8088)
-    uv run hosted_agent.py
-
-    # Build container for Foundry deployment (must be linux/amd64)
-    docker buildx build --platform linux/amd64 -t 42-bank-agent .
+    Local testing: uv run hosted_agent.py
+    Production: Deploy via Docker container to Azure AI Foundry
 """
 
 import os
@@ -28,8 +24,7 @@ from identity import IdentityManager
 
 
 def create_banking_agent() -> ChatAgent:
-    """Create the banking agent with all tools."""
-
+    """Create the banking agent for Azure AI Foundry hosting."""
     project_endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT")
     model_deployment_name = os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", "Phi-4-mini")
     username = os.getenv("BANK_USER", "alice")
@@ -57,10 +52,9 @@ def create_banking_agent() -> ChatAgent:
             credential=DefaultAzureCredential(),
         ),
         instructions=(
-            "You are the 42 Bank Assistant, a helpful banking agent. "
-            "You can check balances, view history, send money, request payments, "
-            "approve requests, list products, and open new accounts. "
-            "Always be helpful and clear in your responses."
+            "You are the 42 Bank Assistant. Help users with banking tasks: "
+            "check balances, view history, send/request money, approve payments, "
+            "list products, and open accounts. Be helpful and clear."
         ),
         tools=[
             tools.check_balance,

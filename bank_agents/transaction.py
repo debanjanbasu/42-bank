@@ -5,6 +5,13 @@ from typing import Protocol, Any, Optional, Sequence
 from agent_framework import Agent
 from tools import BankingTools
 
+INSTRUCTIONS = (
+    "Transaction Specialist. "
+    "1. Use send_money, request_money, or approve_payment. "
+    "2. Report result and STOP. "
+    "3. For balance/history -> handoff_to_TriageAgent()."
+)
+
 
 class ChatClientProtocol(Protocol):
     def as_agent(
@@ -19,12 +26,7 @@ class ChatClientProtocol(Protocol):
 def get_agent(client: ChatClientProtocol, tools: BankingTools) -> Agent:
     return client.as_agent(
         name="TransactionAgent",
-        instructions=(
-            "Transaction Specialist. "
-            "1. Use send_money, request_money, or approve_payment. "
-            "2. Report result and STOP. "
-            "3. For balance/history -> handoff_to_TriageAgent()."
-        ),
+        instructions=INSTRUCTIONS,
         tools=[
             tools.send_money,
             tools.request_money,
