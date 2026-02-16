@@ -136,7 +136,23 @@ async def chat(agent: Any, mode: str, endpoint: Optional[str] = None):
                     break
 
                 print("[Processing...]")
-                response = await agent.run(prompt)
+                
+                # Handle pending human-in-the-loop requests
+                if pending_hil:
+                    # Respond to the pending request
+                    hil_event = pending_hil[0]
+                    response = await agent.run(
+                        prompt,
+                        request_info_response={
+                            "request_id": hil_event.data.request_id,
+                            "response": prompt
+                        }
+                    )
+                    pending_hil = []
+                else:
+                    # Normal message
+                    response = await agent.run(prompt)
+                
                 events = [
                     WorkflowEvent(
                         type="output", data=response, source_executor_id=agent.id
