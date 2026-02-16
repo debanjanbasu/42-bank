@@ -64,10 +64,9 @@ def handle_events(
     return hil
 
 
-async def chat(agent: Agent, mode: str, endpoint: Optional[str] = None):
-    thread = agent.get_new_thread()
-    display_id = thread.service_thread_id or uuid.uuid4().hex[:8]
-    print(f"\nConnected to 42 Bank ({mode.upper()}). Session: {display_id}")
+async def chat(agent: Any, mode: str, endpoint: Optional[str] = None):
+    session_id = uuid.uuid4().hex[:8]
+    print(f"\nConnected to 42 Bank ({mode.upper()}). Session: {session_id}")
     if endpoint:
         print(f"LLM Endpoint: {endpoint}")
     print("Type 'exit', 'quit' or use Ctrl+C to quit.")
@@ -89,7 +88,7 @@ async def chat(agent: Agent, mode: str, endpoint: Optional[str] = None):
                 break
 
             print("[Processing...]")
-            response = await agent.run(prompt, thread=thread)
+            response = await agent.run(prompt)
             events = [
                 WorkflowEvent(
                     type="output", data=response, source_executor_id=agent.id
@@ -176,17 +175,12 @@ def run():
 
         endpoint = None
         if args.mode == "local":
-            endpoint = os.getenv("FOUNDRY_LOCAL_ENDPOINT")
-            if not endpoint:
-                try:
-                    endpoint = get_foundry_local_endpoint()
-                except RuntimeError as e:
-                    print(f"Error: {e}")
-                    return
-            if not endpoint:
-                print(
-                    "Error: Foundry Local not found. Run 'foundry model run <model>' first."
-                )
+            try:
+                endpoint = get_foundry_local_endpoint()
+            except RuntimeError as e:
+                print(f"\n{e}")
+                print("\nTo start Foundry Local:")
+                print("  foundry model run Phi-4-mini-instruct-generic-gpu:5")
                 return
 
         wf = create_banking_workflow(
