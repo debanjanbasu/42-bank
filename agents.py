@@ -1,6 +1,8 @@
 import os
+import re
+import subprocess
 from dotenv import load_dotenv
-from typing import Optional, List, Protocol, Any, Sequence
+from typing import Optional, Protocol, Any, Sequence
 from agent_framework import Agent, resolve_agent_id, InMemoryCheckpointStorage
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.azure import AzureAIClient
@@ -8,7 +10,6 @@ from agent_framework.orchestrations import HandoffBuilder
 from agent_framework._workflows._workflow import Workflow
 from azure.identity.aio import DefaultAzureCredential
 
-# Import modular agents
 from bank_agents import triage, transaction, inquiry, advisor, manager
 from tools import BankingTools
 from ledger import LedgerEngine
@@ -27,6 +28,34 @@ class ChatClientProtocol(Protocol):
     ) -> Agent: ...
 
 
+def get_foundry_local_endpoint() -> str:
+    """
+    Get Foundry Local endpoint from 'foundry service status' output.
+    Returns the endpoint URL or raises an error if not found.
+    """
+    env_endpoint = os.getenv("FOUNDRY_LOCAL_ENDPOINT")
+    if env_endpoint:
+        return env_endpoint
+
+    try:
+        result = subprocess.run(
+            ["foundry", "service", "status"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        output = result.stdout + result.stderr
+        match = re.search(r"http://[\d.]+:(\d+)", output)
+        if match:
+            return f"http://127.0.0.1:{match.group(1)}/v1"
+    except Exception as e:
+        raise RuntimeError(f"Failed to get Foundry Local endpoint: {e}")
+
+    raise RuntimeError(
+        "Foundry Local not running. Start with: foundry model run <model>"
+    )
+
+
 def create_banking_workflow(
     ledger: LedgerEngine,
     identity: IdentityManager,
@@ -35,22 +64,22 @@ def create_banking_workflow(
     model_name: Optional[str] = None,
     mode: str = "local",
 ) -> Workflow:
-    """
-    Creates a robust A2A banking workflow.
-    """
+    """Creates a robust A2A banking workflow."""
 
     client: ChatClientProtocol
 
     if mode == "local":
-        endpoint = os.getenv("FOUNDRY_LOCAL_ENDPOINT", "http://localhost:8080/v1")
-        model_id = model_name or os.getenv("MODEL_NAME", "qwen2.5-1.5b")
+        endpoint = get_foundry_local_endpoint()
+        model_id = model_name or os.getenv(
+            "MODEL_NAME", "Phi-4-mini-instruct-generic-gpu:5"
+        )
         client = OpenAIChatClient(
             model_id=model_id, api_key="local-dev-key", base_url=endpoint
-        )  # type: ignore
+        )
     else:
         project_endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT")
         model_deployment_name = model_name or os.getenv(
-            "AZURE_AI_MODEL_DEPLOYMENT_NAME"
+            "AZURE_AI_MODEL_DEPLOYMENT_NAME", "Phi-4-mini"
         )
         if not project_endpoint:
             raise ValueError("AZURE_AI_PROJECT_ENDPOINT required.")
@@ -58,18 +87,16 @@ def create_banking_workflow(
             project_endpoint=project_endpoint,
             model_deployment_name=model_deployment_name,
             credential=DefaultAzureCredential(),
-        )  # type: ignore
+        )
 
     tools = BankingTools(ledger, identity, username, session_token)
 
-    # Instantiate modular agents
     t_agent = triage.get_agent(client)
     tx_agent = transaction.get_agent(client, tools)
     iq_agent = inquiry.get_agent(client, tools)
     ad_agent = advisor.get_agent(client, tools)
     mg_agent = manager.get_agent(client, tools)
 
-    # Build A2A graph
     return (
         HandoffBuilder(
             name="BankingWorkflow",
@@ -82,7 +109,6 @@ def create_banking_workflow(
         .add_handoff(iq_agent, [t_agent])
         .add_handoff(ad_agent, [t_agent])
         .add_handoff(mg_agent, [t_agent])
-        # Enable autonomous mode for agent-to-agent reasoning
         .with_autonomous_mode(
             turn_limits={
                 resolve_agent_id(t_agent): 1,

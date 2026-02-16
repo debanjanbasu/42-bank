@@ -1,4 +1,7 @@
-from typing import Protocol, List, Any, Optional, Sequence
+"""Manager Agent - Handles escalations and oversight."""
+
+from typing import Protocol, Any, Optional, Sequence
+
 from agent_framework import Agent
 from tools import BankingTools
 
@@ -17,10 +20,9 @@ def get_agent(client: ChatClientProtocol, tools: BankingTools) -> Agent:
     return client.as_agent(
         name="BankManager",
         instructions=(
-            "You are the Bank Manager. Oversight only. "
-            "1. IF user asks high-level questions -> answer clearly and STOP. "
-            "2. IF user needs specific actions (balance, transfer) -> CALL 'handoff_to_TriageAgent()'. "
-            "DO NOT CHAT. DO NOT ASK FOR INFO."
+            "Bank Manager. Oversight only. "
+            "1. Answer high-level questions clearly and STOP. "
+            "2. For specific actions -> handoff_to_TriageAgent()."
         ),
         tools=[
             tools.check_balance,

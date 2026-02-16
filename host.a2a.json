@@ -1,0 +1,16 @@
+{
+    "version": "2.0",
+    "configurationProfile": "mcp-custom-handler",
+    "customHandler": {
+        "description": {
+            "defaultExecutablePath": "python",
+            "arguments": ["a2a_server.py", "--user", "alice", "--port", "8000"]
+        },
+        "port": 8000
+    },
+    "logging": {
+        "logLevel": {
+            "default": "Information"
+        }
+    }
+}

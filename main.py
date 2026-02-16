@@ -9,20 +9,12 @@ import uuid
 from typing import List, Dict, Union, Any, Optional
 from identity import IdentityManager
 from ledger import LedgerEngine
-from agents import create_banking_workflow
+from agents import create_banking_workflow, discover_foundry_local_endpoint
 from bootstrap import bootstrap
 from agent_framework import WorkflowEvent, AgentResponse
 from agent_framework.orchestrations import HandoffAgentUserRequest
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._agent import WorkflowAgent
-
-
-def check_connectivity(endpoint: str) -> bool:
-    try:
-        r = httpx.get(f"{endpoint.rstrip('/')}/models", timeout=1.0)
-        return r.status_code == 200
-    except Exception:
-        return False
 
 
 def parse_txt(content: Any) -> str:
@@ -32,13 +24,10 @@ def parse_txt(content: Any) -> str:
 
     if isinstance(content, str):
         content = content.strip()
-        # 1. Clean markdown code blocks
         content = re.sub(r"```json\s*(.*?)\s*```", r"\1", content, flags=re.DOTALL)
 
-        # 2. Check for stringified JSON artifacts
         if content.startswith("[") or content.startswith("{"):
             try:
-                # Handle double-encoded artifacts
                 sanitized = content.replace("\\n", "\n").replace('\\"', '"')
                 data = json.loads(sanitized)
                 return parse_txt(data)
@@ -78,7 +67,6 @@ def handle_events(
                         print(f"[{sender} Thinking: {c.text}]")
                     elif c.type == "text":
                         txt = parse_txt(c.text).strip()
-                        # Aggressive noise reduction
                         txt = re.sub(
                             r"\[?\{'type': 'text', 'text': ['\"](.*?)['\"]\}\]?",
                             r"\1",
@@ -103,11 +91,12 @@ def handle_events(
     return hil
 
 
-async def chat(agent: WorkflowAgent, mode: str):
+async def chat(agent: WorkflowAgent, mode: str, endpoint: str = None):
     thread = agent.get_new_thread()
-    # AgentThread identifier handling
     display_id = thread.service_thread_id or uuid.uuid4().hex[:8]
     print(f"\nConnected to 42 Bank ({mode.upper()}). Session: {display_id}")
+    if endpoint:
+        print(f"LLM Endpoint: {endpoint}")
     print("Type 'exit', 'quit' or use Ctrl+C to quit.")
 
     pending_hil: List[WorkflowEvent[HandoffAgentUserRequest]] = []
@@ -128,9 +117,7 @@ async def chat(agent: WorkflowAgent, mode: str):
 
             print("[Processing...]")
             if not pending_hil:
-                # Use the thread's underlying conversation management
                 response = await agent.run(prompt, thread=thread)
-                # Convert response to events for handle_events consistency
                 events = [
                     WorkflowEvent(
                         type="output", data=response, source_executor_id=agent.id
@@ -141,7 +128,6 @@ async def chat(agent: WorkflowAgent, mode: str):
                     req.request_id: HandoffAgentUserRequest.create_response(prompt)
                     for req in pending_hil
                 }
-                # WorkflowAgent handles responses internally via run() when pending_requests is populated
                 response = await agent.run(prompt, thread=thread)
                 events = [
                     WorkflowEvent(
@@ -156,12 +142,49 @@ async def chat(agent: WorkflowAgent, mode: str):
             pending_hil = []
 
 
+def run_a2a(args):
+    """Run the A2A server."""
+    from a2a_server import run_a2a_server
+
+    asyncio.run(
+        run_a2a_server(
+            host=args.host,
+            port=args.port,
+            username=args.user,
+            mode=args.mode,
+            model_name=args.model,
+        )
+    )
+
+
+def run_mcp(args):
+    """Run the MCP server."""
+    from mcp_server import run_http, run_stdio
+
+    if args.stdio:
+        run_stdio(username=args.user)
+    else:
+        run_http(host=args.host, port=args.port, username=args.user)
+
+
 def run():
-    p = argparse.ArgumentParser()
-    p.add_argument("--user", choices=["alice", "bob"])
+    p = argparse.ArgumentParser(description="42-Bank: A2A/MCP Compliant Banking Agents")
+    p.add_argument("--user", choices=["alice", "bob"], default="alice")
     p.add_argument("--bootstrap", action="store_true")
     p.add_argument("--mode", choices=["local", "hosted"], default="local")
     p.add_argument("--devui", action="store_true")
+    p.add_argument("--model", default=None, help="Model name/deployment")
+
+    server_group = p.add_mutually_exclusive_group()
+    server_group.add_argument("--a2a", action="store_true", help="Run as A2A server")
+    server_group.add_argument("--mcp", action="store_true", help="Run as MCP server")
+
+    p.add_argument("--host", default="0.0.0.0", help="Server host")
+    p.add_argument(
+        "--port", type=int, default=8000, help="Server port (A2A: 8000, MCP: 8001)"
+    )
+    p.add_argument("--stdio", action="store_true", help="Run MCP in stdio mode")
+
     args = p.parse_args()
 
     try:
@@ -169,6 +192,16 @@ def run():
             bootstrap()
             if args.bootstrap:
                 return
+
+        if args.a2a:
+            run_a2a(args)
+            return
+
+        if args.mcp:
+            if args.port == 8000:
+                args.port = 8001
+            run_mcp(args)
+            return
 
         user = args.user or input("User (alice/bob): ").strip().lower()
         ident, ledger = IdentityManager(), LedgerEngine()
@@ -181,19 +214,27 @@ def run():
         if pk:
             ledger.register_user(token, user, pk.hex())
 
+        endpoint = None
         if args.mode == "local":
-            url = os.getenv("FOUNDRY_LOCAL_ENDPOINT", "http://localhost:8080/v1")
-            if not check_connectivity(url):
-                print(f"Warning: Local LLM unreachable at {url}")
+            endpoint = os.getenv("FOUNDRY_LOCAL_ENDPOINT")
+            if not endpoint:
+                endpoint = discover_foundry_local_endpoint()
+            if not endpoint:
+                print(
+                    "Error: Foundry Local not found. Run 'foundry model run <model>' first."
+                )
+                return
 
-        wf = create_banking_workflow(ledger, ident, user, token, mode=args.mode)
+        wf = create_banking_workflow(
+            ledger, ident, user, token, mode=args.mode, model_name=args.model
+        )
         if args.devui:
             from agent_framework.devui import serve
 
             serve(entities=[wf], auto_open=True, port=8081)
         else:
             agent = wf.as_agent(name="BankingWorkflowAgent")
-            asyncio.run(chat(agent, args.mode))
+            asyncio.run(chat(agent, args.mode, endpoint))
     except EOFError, KeyboardInterrupt:
         print("\nExiting...")
         sys.exit(0)

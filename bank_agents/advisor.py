@@ -1,4 +1,7 @@
-from typing import Protocol, List, Any, Optional, Sequence
+"""Advisor Agent - Assists with bank products and account opening."""
+
+from typing import Protocol, Any, Optional, Sequence
+
 from agent_framework import Agent
 from tools import BankingTools
 
@@ -17,11 +20,10 @@ def get_agent(client: ChatClientProtocol, tools: BankingTools) -> Agent:
     return client.as_agent(
         name="AdvisorAgent",
         instructions=(
-            "You are the Financial Advisor. "
-            "1. IF user wants products -> CALL 'list_products()'. "
-            "2. IF user wants new account -> CALL 'open_new_account(account_type)'. "
-            "3. After answering, STOP. DO NOT CHAT. "
-            "IF they want balance, history, or to move money -> CALL 'handoff_to_TriageAgent()'."
+            "Financial Advisor. "
+            "1. Use list_products or open_new_account. "
+            "2. Report result and STOP. "
+            "3. For balance/transfers -> handoff_to_TriageAgent()."
         ),
         tools=[tools.list_products, tools.open_new_account],
     )
