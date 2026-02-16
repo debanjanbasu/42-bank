@@ -102,12 +102,13 @@ def create_banking_workflow(
         .add_handoff(mg_agent, [t_agent])
         .with_autonomous_mode(
             turn_limits={
-                resolve_agent_id(t_agent): 1,
-                resolve_agent_id(tx_agent): 5,
-                resolve_agent_id(iq_agent): 5,
-                resolve_agent_id(ad_agent): 5,
-                resolve_agent_id(mg_agent): 5,
-            }
+                resolve_agent_id(t_agent): 2,
+                resolve_agent_id(tx_agent): 10,
+                resolve_agent_id(iq_agent): 10,
+                resolve_agent_id(ad_agent): 10,
+                resolve_agent_id(mg_agent): 10,
+            },
+            require_user_confirmation=False,  # No confirmation needed for simple queries
         )
         .build()
     )
