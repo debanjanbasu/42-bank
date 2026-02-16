@@ -51,11 +51,7 @@ class ChatClientProtocol(Protocol):
 
 
 def get_foundry_local_endpoint() -> str:
-    """Get Foundry Local endpoint from environment or service status."""
-    env_endpoint = os.getenv("FOUNDRY_LOCAL_ENDPOINT")
-    if env_endpoint:
-        return env_endpoint
-
+    """Detect Foundry Local endpoint from service status."""
     try:
         result = subprocess.run(
             ["foundry", "service", "status"],
@@ -63,13 +59,15 @@ def get_foundry_local_endpoint() -> str:
             text=True,
             timeout=5,
         )
-        match = re.search(r"http://[\d.]+:(\d+)", result.stdout + result.stderr)
+        match = re.search(r"http://127\.0\.0\.1:(\d+)", result.stdout + result.stderr)
         if match:
             return f"http://127.0.0.1:{match.group(1)}/v1"
-    except Exception as e:
-        raise RuntimeError(f"Foundry Local not running. Start with: foundry model run <model>")
+    except Exception:
+        pass
 
-    raise RuntimeError("Foundry Local not running. Start with: foundry model run <model>")
+    raise RuntimeError(
+        "Foundry Local not running. Start with: foundry model run Phi-4-mini-instruct-generic-gpu:5"
+    )
 
 
 def create_banking_workflow(
