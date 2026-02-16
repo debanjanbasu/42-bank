@@ -6,6 +6,8 @@ import re
 import json
 import sys
 import uuid
+import readline
+from pathlib import Path
 from typing import List, Dict, Union, Any, Optional
 from identity import IdentityManager
 from ledger import LedgerEngine
@@ -15,6 +17,28 @@ from agent_framework import WorkflowEvent, AgentResponse
 from agent_framework.orchestrations import HandoffAgentUserRequest
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._agent import WorkflowAgent
+
+# Configure readline for better input experience
+HISTORY_FILE = Path.home() / ".42bank_history"
+
+
+def setup_readline():
+    """Setup readline for command history and arrow key navigation."""
+    try:
+        # Enable tab completion
+        readline.parse_and_bind("tab: complete")
+        
+        # Enable arrow key navigation
+        readline.parse_and_bind("set editing-mode emacs")
+        
+        # Load history from file
+        if HISTORY_FILE.exists():
+            readline.read_history_file(str(HISTORY_FILE))
+        
+        # Set history length
+        readline.set_history_length(1000)
+    except Exception:
+        pass  # Readline might not be available on all platforms
 
 
 def parse_txt(content: Any) -> str:
@@ -84,40 +108,51 @@ def handle_events(
 
 
 async def chat(agent: Any, mode: str, endpoint: Optional[str] = None):
+    """Interactive chat with command history support."""
+    setup_readline()
+    
     session_id = uuid.uuid4().hex[:8]
     print(f"\nConnected to 42 Bank ({mode.upper()}). Session: {session_id}")
     if endpoint:
         print(f"LLM Endpoint: {endpoint}")
     print("Type 'exit', 'quit' or use Ctrl+C to quit.")
+    print("Use ↑/↓ arrow keys to navigate command history.\n")
 
     pending_hil: List[WorkflowEvent[HandoffAgentUserRequest]] = []
 
-    while True:
-        try:
-            label = "You (reply): " if pending_hil else "You: "
+    try:
+        while True:
             try:
-                prompt = input(label).strip()
-            except (EOFError, KeyboardInterrupt):
-                print("\nExiting...")
-                break
+                label = "You (reply): " if pending_hil else "You: "
+                try:
+                    prompt = input(label).strip()
+                except (EOFError, KeyboardInterrupt):
+                    print("\nExiting...")
+                    break
 
-            if not prompt:
-                continue
-            if prompt.lower() in ["exit", "quit"]:
-                break
+                if not prompt:
+                    continue
+                if prompt.lower() in ["exit", "quit"]:
+                    break
 
-            print("[Processing...]")
-            response = await agent.run(prompt)
-            events = [
-                WorkflowEvent(
-                    type="output", data=response, source_executor_id=agent.id
-                )
-            ]
-            pending_hil = handle_events(events)
+                print("[Processing...]")
+                response = await agent.run(prompt)
+                events = [
+                    WorkflowEvent(
+                        type="output", data=response, source_executor_id=agent.id
+                    )
+                ]
+                pending_hil = handle_events(events)
 
-        except Exception as err:
-            print(f"Error: {err}")
-            pending_hil = []
+            except Exception as err:
+                print(f"Error: {err}")
+                pending_hil = []
+    finally:
+        # Save history on exit
+        try:
+            readline.write_history_file(str(HISTORY_FILE))
+        except Exception:
+            pass
 
 
 def run_a2a(args):
