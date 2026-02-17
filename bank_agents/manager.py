@@ -3,13 +3,6 @@
 from typing import Protocol, Any, Optional, Sequence
 
 from agent_framework import Agent
-from tools import BankingTools
-
-INSTRUCTIONS = (
-    "Bank Manager. Oversight only. "
-    "1. Answer high-level questions clearly and STOP. "
-    "2. For specific actions -> handoff_to_TriageAgent()."
-)
 
 
 class ChatClientProtocol(Protocol):
@@ -22,14 +15,24 @@ class ChatClientProtocol(Protocol):
     ) -> Agent: ...
 
 
-def get_agent(client: ChatClientProtocol, tools: BankingTools) -> Agent:
+def get_agent(client: ChatClientProtocol, tools) -> Agent:
+    """
+    Create BankManager agent with MCP tools.
+    
+    Args:
+        client: Chat client
+        tools: MCP tools (single MCPStreamableHTTPTool or list)
+    """
+    instructions = (
+        "You are the Bank Manager. User is authenticated. "
+        "Tools automatically use their account - DO NOT ask for details. "
+        "Handle complex issues with available tools:\n"
+        "- check_balance, view_history\n"
+        "- list_pending_requests, list_products\n"
+        "Use tools as needed to resolve issues."
+    )
     return client.as_agent(
         name="BankManager",
-        instructions=INSTRUCTIONS,
-        tools=[
-            tools.check_balance,
-            tools.view_history,
-            tools.list_pending_requests,
-            tools.list_products,
-        ],
+        instructions=instructions,
+        tools=tools,
     )

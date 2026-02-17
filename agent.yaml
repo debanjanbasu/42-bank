@@ -16,7 +16,7 @@ memory: "2Gi"
 # Environment variables (set in Foundry portal)
 environment:
   AZURE_AI_PROJECT_ENDPOINT: ${AZURE_AI_PROJECT_ENDPOINT}
-  AZURE_AI_MODEL_DEPLOYMENT_NAME: Phi-4-mini
+  AZURE_AI_MODEL_DEPLOYMENT_NAME: qwen2.5-14b
   BANK_USER: alice
 
 # Protocol support

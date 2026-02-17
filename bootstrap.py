@@ -5,7 +5,7 @@ from ledger import LedgerEngine
 
 
 def bootstrap():
-    print("--- 42 Bank Bootstrap (Quantum-Safe & SQLite) ---")
+    print("--- 42 Bank Bootstrap (Checking Accounts Only) ---")
 
     # 1. Reset data
     if os.path.exists("data"):
@@ -15,25 +15,24 @@ def bootstrap():
     identity = IdentityManager()
     ledger = LedgerEngine()
 
-    # 2. Setup Alice
+    # 2. Setup Alice (checking account only)
     t_alice = identity.create_identity("alice")
     pk_alice = identity.get_public_key("alice")
     if pk_alice:
         ledger.register_user(t_alice, "alice", pk_alice.hex(), 1000.0)
-        ledger.open_account(t_alice, "savings")
 
-    # 3. Setup Bob
+    # 3. Setup Bob (checking account only)
     t_bob = identity.create_identity("bob")
     pk_bob = identity.get_public_key("bob")
     if pk_bob:
         ledger.register_user(t_bob, "bob", pk_bob.hex(), 500.0)
 
-    # 4. Genesis Transactions
-    ledger.transfer(t_alice, "bob", 10.0, "Initial coffee debt payment")
-    ledger.transfer(t_bob, "alice", 5.0, "Cool 42 sticker")
+    # 4. Sample Transactions
+    ledger.transfer(t_alice, "bob", 50.0, "Lunch money")
+    ledger.transfer(t_bob, "alice", 25.0, "Coffee")
 
-    print(f"Alice's Token: {t_alice[:16]}...")
-    print(f"Bob's Token: {t_bob[:16]}...")
+    print(f"✅ Alice: ${ledger.get_balance(t_alice, 'checking'):.2f} (checking)")
+    print(f"✅ Bob: ${ledger.get_balance(t_bob, 'checking'):.2f} (checking)")
     print("Bootstrap Complete!")
 
 

@@ -3,14 +3,6 @@
 from typing import Protocol, Any, Optional, Sequence
 
 from agent_framework import Agent
-from tools import BankingTools
-
-INSTRUCTIONS = (
-    "Transaction Specialist. "
-    "1. Use send_money, request_money, or approve_payment. "
-    "2. Report result and STOP. "
-    "3. For balance/history -> handoff_to_TriageAgent()."
-)
 
 
 class ChatClientProtocol(Protocol):
@@ -23,14 +15,22 @@ class ChatClientProtocol(Protocol):
     ) -> Agent: ...
 
 
-def get_agent(client: ChatClientProtocol, tools: BankingTools) -> Agent:
+def get_agent(client: ChatClientProtocol, tools) -> Agent:
+    instructions = (
+        "You are a transaction specialist. User is authenticated.\n\n"
+        "RULES - FOLLOW EXACTLY:\n"
+        "1. For 'send $X to Y': call send_money(to=Y, amount=X, note='') - NO QUESTIONS\n"
+        "2. For 'request $X from Y': call request_money(from_user=Y, amount=X, note='') - NO QUESTIONS\n"
+        "3. For 'pending' or 'requests': call list_pending_requests() - NO QUESTIONS\n"
+        "4. For 'approve request X': call approve_payment(request_id=X) - NO QUESTIONS\n\n"
+        "NEVER ask for:\n"
+        "- Account numbers (we only have checking)\n"
+        "- Confirmation before calling\n"
+        "- Additional details\n\n"
+        "Extract username and amount from message. Call tool FIRST. Talk AFTER."
+    )
     return client.as_agent(
         name="TransactionAgent",
-        instructions=INSTRUCTIONS,
-        tools=[
-            tools.send_money,
-            tools.request_money,
-            tools.approve_payment,
-            tools.list_pending_requests,
-        ],
+        instructions=instructions,
+        tools=tools,
     )

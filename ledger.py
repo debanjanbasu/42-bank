@@ -285,10 +285,17 @@ class LedgerEngine:
 
         lines = []
         for tx in history:
-            role = "SENT" if tx.sender.lower() == user.username.lower() else "RECEIVED"
-            lines.append(
-                f"- {tx.timestamp[:16]} {role} ${tx.amount:.2f} Note: {tx.description}"
-            )
+            is_sender = tx.sender.lower() == user.username.lower()
+            if is_sender:
+                # User sent money
+                lines.append(
+                    f"- {tx.timestamp[:16]} SENT ${tx.amount:.2f} to {tx.recipient} - {tx.description}"
+                )
+            else:
+                # User received money
+                lines.append(
+                    f"- {tx.timestamp[:16]} RECEIVED ${tx.amount:.2f} from {tx.sender} - {tx.description}"
+                )
         return "\n".join(lines)
 
     def list_user_accounts(self, token: str) -> str:

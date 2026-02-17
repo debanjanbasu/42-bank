@@ -3,14 +3,6 @@
 from typing import Protocol, Any, Optional, Sequence
 
 from agent_framework import Agent
-from tools import BankingTools
-
-INSTRUCTIONS = (
-    "Financial Advisor. "
-    "1. Use list_products or open_new_account. "
-    "2. Report result and STOP. "
-    "3. For balance/transfers -> handoff_to_TriageAgent()."
-)
 
 
 class ChatClientProtocol(Protocol):
@@ -23,9 +15,16 @@ class ChatClientProtocol(Protocol):
     ) -> Agent: ...
 
 
-def get_agent(client: ChatClientProtocol, tools: BankingTools) -> Agent:
+def get_agent(client: ChatClientProtocol, tools) -> Agent:
+    instructions = (
+        "You are a financial advisor. User is authenticated. "
+        "For product inquiries: IMMEDIATELY call list_products(). "
+        "For opening accounts: IMMEDIATELY call open_new_account(account_type). "
+        "DO NOT provide generic advice without calling tools first. "
+        "Just call the appropriate tool immediately."
+    )
     return client.as_agent(
         name="AdvisorAgent",
-        instructions=INSTRUCTIONS,
-        tools=[tools.list_products, tools.open_new_account],
+        instructions=instructions,
+        tools=tools,
     )

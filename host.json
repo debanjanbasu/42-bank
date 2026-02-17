@@ -1,14 +1,15 @@
 {
-    "version": "2.0",
-    "configurationProfile": "mcp-custom-handler",
-    "customHandler": {
-        "description": {
-            "defaultExecutablePath": "python",
-            "arguments": ["mcp_server.py", "--http", "--user", "alice", "--port", "8001"]
-        },
-        "port": 8001
-    },
-    "logging": {
-        "logLevel": { "default": "Information" }
+  "version": "2.0",
+  "logging": {
+    "applicationInsights": {
+      "samplingSettings": {
+        "isEnabled": true,
+        "maxTelemetryItemsPerSecond": 20
+      }
     }
+  },
+  "extensionBundle": {
+    "id": "Microsoft.Azure.Functions.ExtensionBundle.Preview",
+    "version": "[4.*, 5.0.0)"
+  }
 }

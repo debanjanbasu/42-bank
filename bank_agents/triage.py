@@ -4,15 +4,6 @@ from typing import Protocol, Any, Optional, Sequence
 
 from agent_framework import Agent
 
-INSTRUCTIONS = (
-    "You are the 42 Bank Receptionist. YOUR ONLY JOB IS ROUTING. "
-    "1. MONEY MOVEMENT (send, transfer, request, pay, approve) -> handoff_to_TransactionAgent(). "
-    "2. STATUS (balance, history, accounts) -> handoff_to_InquiryAgent(). "
-    "3. PRODUCTS (loans, cards, mortgages) -> handoff_to_AdvisorAgent(). "
-    "4. General help or oversight -> handoff_to_BankManager(). "
-    "NEVER answer yourself. ALWAYS use a handoff tool immediately."
-)
-
 
 class ChatClientProtocol(Protocol):
     def as_agent(
@@ -24,8 +15,23 @@ class ChatClientProtocol(Protocol):
     ) -> Agent: ...
 
 
-def get_agent(client: ChatClientProtocol) -> Agent:
+def get_agent(client: ChatClientProtocol, tools=None) -> Agent:
+    instructions = (
+        "You are a bank receptionist. Your ONLY job: route to specialists.\n\n"
+        "ROUTING RULES - FOLLOW EXACTLY:\n"
+        "• 'balance', 'money', 'account', 'transactions', 'history' → InquiryAgent\n"
+        "• 'send', 'transfer', 'pay' → TransactionAgent\n"
+        "• 'products', 'loan', 'open' → AdvisorAgent\n"
+        "• 'complaint', 'problem' → BankManager\n\n"
+        "DO NOT:\n"
+        "- Ask 'what would you like?'\n"
+        "- Ask 'choose from these options'\n"
+        "- Say 'to help you better'\n"
+        "- List options\n\n"
+        "Just call the appropriate agent immediately. No text before handoff."
+    )
     return client.as_agent(
         name="TriageAgent",
-        instructions=INSTRUCTIONS,
+        instructions=instructions,
+        tools=tools,
     )

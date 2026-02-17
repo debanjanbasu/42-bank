@@ -1,0 +1,9 @@
+# Azure Functions Requirements
+azure-functions
+azure-functions-mcp
+
+# Core dependencies
+pydantic>=2.0
+cryptography>=41.0
+
+# Add other project dependencies as needed

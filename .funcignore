@@ -1,0 +1,37 @@
+# Azure Functions - files to exclude from deployment
+
+# Git and version control
+.git*
+.vscode/
+.idea/
+
+# Python artifacts
+__pycache__/
+*.pyc
+.venv/
+.python_packages/
+
+# Azure local development
+local.settings.json
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Testing
+test/
+tests/
+.pytest_cache/
+.coverage
+
+# Data and keys (runtime generated)
+data/*.db
+data/keys/
+*.sk
+*.key
+
+# Documentation (keep README.md for deployment, exclude others)
+DEVELOPER.md
+DEPLOYMENT.md
+checkpoints/

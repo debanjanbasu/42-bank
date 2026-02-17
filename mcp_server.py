@@ -27,11 +27,11 @@ _username: Optional[str] = None
 _session_token: Optional[str] = None
 
 
-def init_context(username: str) -> None:
+def init_context(username: str, db_path: Optional[str] = None) -> None:
     """Initialize banking context."""
     global _ledger, _identity, _username, _session_token
     _identity = IdentityManager()
-    _ledger = LedgerEngine()
+    _ledger = LedgerEngine(db_path=db_path) if db_path else LedgerEngine()
     _username = username
     _session_token = _identity.get_token(username)
     if not _session_token:
@@ -42,43 +42,38 @@ def init_context(username: str) -> None:
 
 
 @mcp.tool()
-def check_balance(account_type: str = "checking") -> str:
-    """View account balance."""
+def check_balance() -> str:
+    """View your checking account balance."""
     if not _ledger or not _session_token:
         return "ERROR: Not initialized"
-    return f"Your {account_type} balance is ${_ledger.get_balance(_session_token, account_type):.2f}"
+    balance = _ledger.get_balance(_session_token, "checking")
+    return f"Your checking account balance is ${balance:.2f}"
 
 
 @mcp.tool()
-def view_history(account_type: str = "checking") -> str:
-    """View transaction history."""
+def view_history() -> str:
+    """View transaction history for your checking account."""
     if not _ledger or not _session_token:
         return "ERROR: Not initialized"
-    return _ledger.get_history(_session_token, account_type)
+    return _ledger.get_history(_session_token, "checking")
 
 
 @mcp.tool()
 def list_my_accounts() -> str:
-    """List all your accounts."""
+    """List your checking account and balance."""
     if not _ledger or not _session_token:
         return "ERROR: Not initialized"
     return _ledger.list_user_accounts(_session_token)
 
 
 @mcp.tool()
-def send_money(
-    to: str,
-    amount: float,
-    note: str,
-    from_account: str = "checking",
-    to_account: str = "checking",
-) -> str:
-    """Send money to another user."""
+def send_money(to: str, amount: float, note: str) -> str:
+    """Send money from your checking account to another user."""
     if not _ledger or not _identity or not _username or not _session_token:
         return "ERROR: Not initialized"
     sig = _identity.sign_message(_username, f"{to}{amount}{note}".encode())
     success = _ledger.transfer(
-        _session_token, to, amount, note, from_account, to_account, signature=sig.hex()
+        _session_token, to, amount, note, "checking", "checking", signature=sig.hex()
     )
     return (
         f"Transferred ${amount:.2f} to {to}."
@@ -162,53 +157,32 @@ def products_resource() -> str:
 
 
 def run_http(host: str = "0.0.0.0", port: int = 8001, username: str = "alice") -> None:
-    """Run MCP server with HTTP/SSE transport (for Azure Functions)."""
+    """Run MCP server with streamable HTTP transport (for Agent Framework)."""
+    db_path = os.getenv("TEST_DB")  # Allow tests to specify database
+    init_context(username, db_path=db_path)
+    print(f"MCP Streamable HTTP Server: http://{host}:{port}", file=sys.stderr)
+    print(f"User: {username}", file=sys.stderr)
+    if db_path:
+        print(f"Database: {db_path}", file=sys.stderr)
+    
+    # Use streamable-http transport which works with MCPStreamableHTTPTool
     import uvicorn
-    from starlette.applications import Starlette
-    from starlette.routing import Route
-    from starlette.responses import JSONResponse
-    from starlette.requests import Request
-    from mcp.server.sse import SseServerTransport
-
-    init_context(username)
-    sse = SseServerTransport("/messages")
-
-    async def handle_sse(request: Request):
-        async with sse.connect_sse(request.scope, request.receive, request._send) as (
-            reader,
-            writer,
-        ):
-            await mcp._mcp_server.run(
-                reader, writer, mcp._mcp_server.create_initialization_options()
-            )
-
-    async def health(request: Request) -> JSONResponse:
-        return JSONResponse(
-            {"status": "healthy", "protocol": "MCP", "server": "42-bank-tools"}
-        )
-
-    app = Starlette(
-        routes=[
-            Route("/sse", endpoint=handle_sse),
-            Route("/messages", endpoint=handle_sse, methods=["POST"]),
-            Route("/health", endpoint=health),
-        ]
-    )
-
-    print(f"MCP HTTP Server: http://{host}:{port}", file=sys.stderr)
-    print(f"SSE endpoint: /sse", file=sys.stderr)
+    app = mcp.streamable_http_app()
     uvicorn.run(app, host=host, port=port)
+
 
 
 def run_stdio(username: str = "alice") -> None:
     """Run MCP server with stdio transport (for local development)."""
-    init_context(username)
+    db_path = os.getenv("TEST_DB")
+    init_context(username, db_path=db_path)
     print(f"MCP stdio server initialized for: {username}", file=sys.stderr)
     mcp.run()
 
 
 if __name__ == "__main__":
     import argparse
+    import sys
 
     p = argparse.ArgumentParser(description="42-Bank MCP Server")
     p.add_argument("--http", action="store_true", help="Use HTTP/SSE transport")
@@ -218,7 +192,11 @@ if __name__ == "__main__":
     p.add_argument("--user", choices=["alice", "bob"], default="alice")
     args = p.parse_args()
 
-    if args.stdio or not args.http:
-        run_stdio(args.user)
-    else:
-        run_http(args.host, args.port, args.user)
+    try:
+        if args.stdio or not args.http:
+            run_stdio(args.user)
+        else:
+            run_http(args.host, args.port, args.user)
+    except KeyboardInterrupt:
+        print("\n\n👋 Shutting down MCP server...", file=sys.stderr)
+        sys.exit(0)

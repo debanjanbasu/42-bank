@@ -8,15 +8,11 @@ import sys
 import uuid
 import readline
 from pathlib import Path
-from typing import List, Dict, Union, Any, Optional
+from typing import Dict, Any, Optional
+from bootstrap import bootstrap
 from identity import IdentityManager
 from ledger import LedgerEngine
-from agents import create_banking_workflow, get_foundry_local_endpoint
-from bootstrap import bootstrap
-from agent_framework import WorkflowEvent, AgentResponse
-from agent_framework.orchestrations import HandoffAgentUserRequest
-from agent_framework._workflows._workflow import Workflow
-from agent_framework._workflows._agent import WorkflowAgent
+from utils import get_foundry_local_endpoint
 
 # Configure readline for better input experience
 HISTORY_FILE = Path.home() / ".42bank_history"
@@ -41,70 +37,153 @@ def setup_readline():
         pass  # Readline might not be available on all platforms
 
 
-def parse_txt(content: Any) -> str:
-    """Extract clean text from agent outputs."""
-    if content is None:
-        return ""
-    
-    if isinstance(content, str):
-        content = content.strip()
-        # Filter out JSON-like structures
-        if content.startswith("[{") or content.startswith("{"):
-            return ""
-        return content
-    
-    if isinstance(content, dict):
-        # Skip handoff and function call dicts
-        if content.get("type") in ["handoff", "function_call"]:
-            return ""
-        return content.get("text", "")
-    
-    if isinstance(content, list):
-        texts = []
-        for item in content:
-            if isinstance(item, dict) and item.get("type") == "text":
-                texts.append(item.get("text", ""))
-            elif isinstance(item, str):
-                texts.append(item)
-        return " ".join(t for t in texts if t and not t.startswith("[{"))
-    
-    return str(content)
+def clean_agent_response(text: str) -> str:
+    """Clean up agent response text by removing tool call markup."""
+    # Remove <tool_call>...</tool_call> blocks
+    text = re.sub(r'<tool_call>.*?</tool_call>', '', text, flags=re.DOTALL)
+    # Remove Thai/multilingual prefixes (common in model responses)
+    text = re.sub(r'^[\u0E00-\u0E7F\s]+', '', text)
+    # Remove extra whitespace
+    text = re.sub(r'\n\n+', '\n\n', text.strip())
+    return text.strip()
 
 
-def handle_events(
-    events: List[WorkflowEvent[Any]],
-) -> List[WorkflowEvent[HandoffAgentUserRequest]]:
-    hil: List[WorkflowEvent[HandoffAgentUserRequest]] = []
-    for e in events:
-        if e.type == "handoff_sent":
-            source = e.data.source if hasattr(e.data, 'source') else 'Agent'
-            target = e.data.target if hasattr(e.data, 'target') else 'Agent'
-            print(f"[Handoff: {source} → {target}]")
-        elif e.type == "output" and isinstance(e.data, AgentResponse):
-            for msg in e.data.messages:
-                sender = msg.author_name or msg.role
-                for c in msg.contents:
-                    if c.type == "text_reasoning":
-                        # Skip reasoning output for cleaner UI
-                        pass
-                    elif c.type == "text":
-                        txt = parse_txt(c.text).strip()
-                        if txt and "Continue assisting" not in txt and "handoff" not in txt.lower():
-                            print(f"\n{sender}: {txt}\n")
-                    elif c.type == "function_call":
-                        # Only show important function calls
-                        if c.name not in ["request_info"]:
-                            print(f"[Calling: {c.name}]")
-        elif e.type == "request_info" and isinstance(e.data, HandoffAgentUserRequest):
-            # Human in loop request - show the agent's message
-            for msg in e.data.agent_response.messages:
-                for c in msg.contents:
-                    if c.type == "text":
-                        txt = parse_txt(c.text).strip()
-                        if txt and not txt.startswith("[{"):
-                            print(f"\n{msg.author_name or msg.role}: {txt}\n")
-            hil.append(e)
-    return hil
+async def chat_async(user: str, a2a_url: str = "http://localhost:8000"):
+    """Chat via A2A triage agent (which routes to specialists)."""
+    from identity import IdentityManager
+    from ledger import LedgerEngine
+    import aiohttp
+    
+    setup_readline()
+    session_id = uuid.uuid4().hex[:8]
+    
+    # Setup
+    ident, ledger = IdentityManager(), LedgerEngine()
+    token = ident.get_token(user)
+    pk = ident.get_public_key(user)
+    if pk:
+        ledger.register_user(token, user, pk.hex())
+    
+    print(f"\nConnected to 42 Bank ({user.upper()}). Session: {session_id}")
+    print(f"A2A Triage: {a2a_url}/a2a/triage")
+    print("Type 'exit', 'quit' or use Ctrl+C to quit.")
+    print("Use ↑/↓ arrow keys to navigate command history.\n")
+
+    # Call triage agent - it routes to specialists internally
+    triage_url = f"{a2a_url}/a2a/triage/v1/message"
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            while True:
+                try:
+                    prompt = input("You: ").strip()
+                    if not prompt or prompt.lower() in ["exit", "quit"]:
+                        break
+
+                    print("[Processing...]")
+                    
+                    payload = {
+                        "message": {
+                            "parts": [{"kind": "text", "text": prompt}]
+                        }
+                    }
+                    
+                    async with session.post(triage_url, json=payload) as resp:
+                        if resp.status != 200:
+                            print(f"\n❌ Error: HTTP {resp.status}")
+                            continue
+                        
+                        result = await resp.json()
+                        # Extract text from A2A response
+                        if "result" in result and "parts" in result["result"]:
+                            for part in result["result"]["parts"]:
+                                if part.get("kind") == "text":
+                                    text = part.get("text", "")
+                                    cleaned = clean_agent_response(text)
+                                    if cleaned:
+                                        print(f"\n{cleaned}\n")
+                        else:
+                            print(f"\n{result}\n")
+
+                except KeyboardInterrupt:
+                    print("\n")
+                    break
+                except EOFError:
+                    break
+                except Exception as err:
+                    print(f"\n❌ Error: {err}\n")
+    finally:
+        try:
+            readline.write_history_file(str(HISTORY_FILE))
+        except:
+            pass
+
+
+def chat_sync(a2a_url: str, user: str):
+    """Synchronous chat interface that calls triage agent via A2A HTTP."""
+    import requests
+    
+    setup_readline()
+    session_id = uuid.uuid4().hex[:8]
+    context_id = str(uuid.uuid4())
+    
+    print(f"\nConnected to 42 Bank ({user.upper()}). Session: {session_id}")
+    print(f"A2A Endpoint: {a2a_url}")
+    print("Type 'exit', 'quit' or use Ctrl+C to quit.")
+    print("Use ↑/↓ arrow keys to navigate command history.\n")
+
+    while True:
+        try:
+            user_input = input("You: ").strip()
+            
+            if user_input.lower() in ["exit", "quit"]:
+                break
+            
+            if not user_input:
+                continue
+
+            print("[Processing...]")
+            
+            # Call triage agent via A2A HTTP
+            response = requests.post(
+                f"{a2a_url}/a2a/triage/v1/message",
+                json={
+                    "message": {
+                        "parts": [{"kind": "text", "text": user_input}],
+                        "contextId": context_id
+                    }
+                },
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                # Extract text from response parts
+                text = ""
+                for part in data.get("parts", []):
+                    if part.get("kind") == "text":
+                        text += part.get("text", "")
+                
+                # Clean up tool call markup and formatting
+                cleaned_text = clean_agent_response(text)
+                
+                if cleaned_text:
+                    print(f"\n{cleaned_text}\n")
+                else:
+                    print("\nNo response received. Please try again.\n")
+            else:
+                print(f"Error: HTTP {response.status_code}")
+                
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            print(f"Error: {e}")
+
+    print("\nExiting...")
+    try:
+        readline.write_history_file(str(HISTORY_FILE))
+    except:
+        pass
 
 
 async def chat(agent: Any, mode: str, endpoint: Optional[str] = None):
@@ -250,19 +329,31 @@ def run():
             except RuntimeError as e:
                 print(f"\n{e}")
                 print("\nTo start Foundry Local:")
-                print("  foundry model run Phi-4-mini-instruct-generic-gpu:5")
+                print("  foundry model run qwen2.5-1.5b-instruct-generic-gpu:4")
                 return
 
-        wf = create_banking_workflow(
-            ledger, ident, user, token, mode=args.mode, model_name=args.model
-        )
-        if args.devui:
-            from agent_framework.devui import serve
+        # Verify A2A server is running
+        try:
+            import requests
+            response = requests.get("http://localhost:8000/health", timeout=2)
+            if response.status_code != 200:
+                print("\n⚠ A2A server health check failed")
+                print("\nStart the A2A server:")
+                print(f"  uv run a2a_server.py --user {user}")
+                return
+        except Exception as e:
+            print(f"\n⚠ Cannot connect to A2A server at http://localhost:8000")
+            print("\nStart the A2A server in another terminal:")
+            print(f"  uv run a2a_server.py --user {user}")
+            return
 
-            serve(entities=[wf], auto_open=True, port=8081)
+        # Use A2A protocol for all agent communication
+        a2a_url = "http://localhost:8000"
+        
+        if args.devui:
+            print("\nDevUI not supported in A2A mode.")
         else:
-            agent = wf.as_agent(name="BankingWorkflowAgent")
-            asyncio.run(chat(agent, args.mode, endpoint))
+            asyncio.run(chat_async(user, a2a_url))
     except (EOFError, KeyboardInterrupt):
         print("\nExiting...")
         sys.exit(0)

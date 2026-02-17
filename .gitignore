@@ -1,13 +1,107 @@
+# ============================================
+# SECURITY - DO NOT COMMIT
+# ============================================
+# Private keys and certificates
+*.sk
+*.pem
+*.key
+*.p12
+*.pfx
+data/keys/
+keys/
+
+# Databases (contain user data)
+*.db
+*.sqlite
+*.sqlite3
+data/*.db
+data/test_*.db
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.secret
+secrets/
+.secrets/
+
+# Azure/Cloud credentials
+local.settings.json
+.azure/
+
+# ============================================
 # Python
+# ============================================
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+*.wheel
+
+# Virtual environments
 .venv/
-.env
+venv/
+ENV/
+env/
 
-# Project Data (Sensitive keys and local DB)
-data/
+# ============================================
+# Testing & Coverage
+# ============================================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.cover
+.hypothesis/
+.tox/
+*.log
 
-# OS specific
+# ============================================
+# IDEs & Editors
+# ============================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# ============================================
+# OS
+# ============================================
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+desktop.ini
+
+# ============================================
+# Build & Cache
+# ============================================
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+.pyre/
+
+# ============================================
+# Project Specific
+# ============================================
+# Session state (personal workspace)
+.copilot/session-state/
+
+# Temporary files
+*.tmp
+tmp/
+temp/

@@ -3,14 +3,6 @@
 from typing import Protocol, Any, Optional, Sequence
 
 from agent_framework import Agent
-from tools import BankingTools
-
-INSTRUCTIONS = (
-    "Inquiry Specialist. "
-    "1. Use check_balance, view_history, or list_my_accounts. "
-    "2. Report result and STOP. "
-    "3. For money transfers -> handoff_to_TriageAgent()."
-)
 
 
 class ChatClientProtocol(Protocol):
@@ -23,9 +15,28 @@ class ChatClientProtocol(Protocol):
     ) -> Agent: ...
 
 
-def get_agent(client: ChatClientProtocol, tools: BankingTools) -> Agent:
+def get_agent(client: ChatClientProtocol, tools) -> Agent:
+    """
+    Create InquiryAgent with MCP tools.
+    
+    Args:
+        client: Chat client
+        tools: MCP tools (single MCPStreamableHTTPTool or list)
+    """
+    instructions = (
+        "You are an inquiry specialist. User is authenticated.\n\n"
+        "RULES - FOLLOW EXACTLY:\n"
+        "1. For 'balance' or 'what's my balance': call check_balance() - NO QUESTIONS\n"
+        "2. For 'transactions' or 'history': call view_history() - NO QUESTIONS\n"
+        "3. For 'accounts' or 'list accounts': call list_my_accounts() - NO QUESTIONS\n\n"
+        "NEVER say: 'could you please', 'what would you like', 'specify', 'choose from'\n"
+        "NEVER ask: which account, what information, what option\n\n"
+        "CORRECT: User says 'show transactions' → You call view_history() → Return results\n"
+        "WRONG: User says 'show transactions' → You ask 'which option do you prefer?'\n\n"
+        "Call the tool FIRST. Talk AFTER you have results."
+    )
     return client.as_agent(
         name="InquiryAgent",
-        instructions=INSTRUCTIONS,
-        tools=[tools.check_balance, tools.view_history, tools.list_my_accounts],
+        instructions=instructions,
+        tools=tools,
     )

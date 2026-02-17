@@ -1,8 +1,8 @@
 """
 A2A Server - Exposes banking agents via the Agent2Agent protocol.
 
-This module implements A2A protocol compliance for Azure AI Foundry.
-Foundry agents use A2ATool to connect to this endpoint.
+This module implements A2A protocol compliance with MCP tool integration.
+Banking tools are provided by MCP server running on port 8001.
 
 Authentication modes:
 - Key-based: API key in x-api-key header
@@ -30,10 +30,11 @@ from azure.identity.aio import DefaultAzureCredential
 from azure.core.credentials import AccessToken
 
 from dotenv import load_dotenv
+from utils import create_chat_client
+from mcp_client import get_banking_mcp_tools
 from bank_agents import triage, transaction, inquiry, advisor, manager
-from tools import BankingTools
-from ledger import LedgerEngine
 from identity import IdentityManager
+from ledger import LedgerEngine
 
 load_dotenv()
 
@@ -76,30 +77,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
             },
             status_code=401,
             headers={"WWW-Authenticate": 'Bearer realm="42-bank"'},
-        )
-
-
-def create_chat_client(mode: str = "local", model_name: Optional[str] = None):
-    """Create chat client based on deployment mode."""
-    if mode == "local":
-        endpoint = os.getenv("FOUNDRY_LOCAL_ENDPOINT", "http://localhost:8080/v1")
-        model_id = model_name or os.getenv(
-            "MODEL_NAME", "Phi-4-mini-instruct-generic-gpu:5"
-        )
-        return OpenAIChatClient(
-            model_id=model_id, api_key="local-dev-key", base_url=endpoint
-        )
-    else:
-        project_endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT")
-        model_deployment_name = model_name or os.getenv(
-            "AZURE_AI_MODEL_DEPLOYMENT_NAME", "Phi-4-mini"
-        )
-        if not project_endpoint:
-            raise ValueError("AZURE_AI_PROJECT_ENDPOINT required for hosted mode.")
-        return AzureAIClient(
-            project_endpoint=project_endpoint,
-            model_deployment_name=model_deployment_name,
-            credential=DefaultAzureCredential(),
         )
 
 
@@ -210,30 +187,33 @@ class A2AAgentHandler:
             if part.get("kind") == "text":
                 user_text += part.get("text", "")
 
-        thread = self.agent.get_new_thread()
-
         try:
-            response = await self.agent.run(user_text, thread=thread)
+            response = await self.agent.run(user_text)
             response_text = ""
             for msg in response.messages:
                 for content in msg.contents:
                     if hasattr(content, "text") and content.text:
                         response_text += content.text
 
+            # Return JSON-RPC formatted response
             return {
-                "kind": "message",
-                "role": "agent",
-                "parts": [{"kind": "text", "text": response_text}],
-                "messageId": str(uuid.uuid4()),
-                "contextId": context_id,
+                "result": {
+                    "kind": "message",
+                    "role": "agent",
+                    "parts": [{"kind": "text", "text": response_text}],
+                    "messageId": str(uuid.uuid4()),
+                    "contextId": context_id,
+                }
             }
         except Exception as e:
             return {
-                "kind": "message",
-                "role": "agent",
-                "parts": [{"kind": "text", "text": f"Error: {e}"}],
-                "messageId": str(uuid.uuid4()),
-                "contextId": context_id,
+                "result": {
+                    "kind": "message",
+                    "role": "agent",
+                    "parts": [{"kind": "text", "text": f"Error: {e}"}],
+                    "messageId": str(uuid.uuid4()),
+                    "contextId": context_id,
+                }
             }
 
 
@@ -246,17 +226,38 @@ def create_a2a_app(
     model_name: Optional[str] = None,
     api_key: Optional[str] = None,
     require_auth: bool = False,
+    mcp_server_url: str = "http://localhost:8001",
 ) -> Starlette:
-    """Create A2A server application."""
+    """Create A2A server application with MCP tool integration."""
     client = create_chat_client(mode, model_name)
-    tools = BankingTools(ledger, identity, username, session_token)
-
+    
+    # Get MCP tools from the MCP server
+    # MCPStreamableHTTPTool auto-discovers all tools from the server
+    mcp_tools = get_banking_mcp_tools(mcp_server_url)
+    
+    # Create specialist agents with MCP tools
+    inquiry_agent = inquiry.get_agent(client, mcp_tools)
+    transaction_agent = transaction.get_agent(client, mcp_tools)
+    advisor_agent = advisor.get_agent(client, mcp_tools)
+    manager_agent = manager.get_agent(client, mcp_tools)
+    
+    # Convert specialist agents to tools for triage to call
+    specialist_tools = [
+        inquiry_agent.as_tool(),
+        transaction_agent.as_tool(),
+        advisor_agent.as_tool(),
+        manager_agent.as_tool(),
+    ]
+    
+    # Create triage agent with specialist agents as callable tools
+    triage_agent = triage.get_agent(client, specialist_tools)
+    
     agents: Dict[str, Agent] = {
-        "triage": triage.get_agent(client),
-        "transaction": transaction.get_agent(client, tools),
-        "inquiry": inquiry.get_agent(client, tools),
-        "advisor": advisor.get_agent(client, tools),
-        "manager": manager.get_agent(client, tools),
+        "triage": triage_agent,
+        "inquiry": inquiry_agent,
+        "transaction": transaction_agent,
+        "advisor": advisor_agent,
+        "manager": manager_agent,
     }
 
     handlers = {key: A2AAgentHandler(agent, key) for key, agent in agents.items()}
@@ -331,6 +332,7 @@ async def run_a2a_server(
     model_name: Optional[str] = None,
     api_key: Optional[str] = None,
     require_auth: bool = False,
+    mcp_server_url: str = "http://localhost:8001",
 ):
     """Run the A2A server."""
     import uvicorn
@@ -346,7 +348,7 @@ async def run_a2a_server(
         ledger.register_user(token, username, pk.hex())
 
     app = create_a2a_app(
-        ledger, ident, username, token, mode, model_name, api_key, require_auth
+        ledger, ident, username, token, mode, model_name, api_key, require_auth, mcp_server_url
     )
 
     print(f"A2A Server: http://{host}:{port}")
@@ -361,28 +363,35 @@ async def run_a2a_server(
 
 if __name__ == "__main__":
     import argparse
+    import sys
 
-    p = argparse.ArgumentParser(description="42-Bank A2A Server")
-    p.add_argument("--host", default="0.0.0.0")
-    p.add_argument("--port", type=int, default=8000)
-    p.add_argument("--user", choices=["alice", "bob"], default="alice")
-    p.add_argument("--mode", choices=["local", "hosted"], default="local")
-    p.add_argument("--model", default=None)
-    p.add_argument("--api-key", default=None, help="API key for authentication")
-    p.add_argument("--require-auth", action="store_true", help="Require authentication")
-    args = p.parse_args()
+    try:
+        p = argparse.ArgumentParser(description="42-Bank A2A Server")
+        p.add_argument("--host", default="0.0.0.0")
+        p.add_argument("--port", type=int, default=8000)
+        p.add_argument("--user", choices=["alice", "bob"], default="alice")
+        p.add_argument("--mode", choices=["local", "hosted"], default="local")
+        p.add_argument("--model", default=None)
+        p.add_argument("--api-key", default=None, help="API key for authentication")
+        p.add_argument("--require-auth", action="store_true", help="Require authentication")
+        p.add_argument("--mcp-server-url", default="http://localhost:8001", help="MCP server URL")
+        args = p.parse_args()
 
-    api_key = args.api_key or os.getenv("A2A_API_KEY")
-    require_auth = args.require_auth or bool(api_key)
+        api_key = args.api_key or os.getenv("A2A_API_KEY")
+        require_auth = args.require_auth or bool(api_key)
 
-    asyncio.run(
-        run_a2a_server(
-            host=args.host,
-            port=args.port,
-            username=args.user,
-            mode=args.mode,
-            model_name=args.model,
-            api_key=api_key,
-            require_auth=require_auth,
+        asyncio.run(
+            run_a2a_server(
+                host=args.host,
+                port=args.port,
+                username=args.user,
+                mode=args.mode,
+                model_name=args.model,
+                api_key=api_key,
+                require_auth=require_auth,
+                mcp_server_url=args.mcp_server_url,
+            )
         )
-    )
+    except KeyboardInterrupt:
+        print("\n\n👋 Shutting down server...")
+        sys.exit(0)
