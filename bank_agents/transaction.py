@@ -18,6 +18,7 @@ class ChatClientProtocol(Protocol):
 def get_agent(client: ChatClientProtocol, tools) -> Agent:
     instructions = (
         "You are a transaction specialist. User is authenticated.\n\n"
+        "LANGUAGE: Always respond in ENGLISH only.\n\n"
         "CRITICAL: Extract parameters EXACTLY and call tools immediately.\n\n"
         "RULES - FOLLOW EXACTLY:\n"
         "1. For money transfers:\n"

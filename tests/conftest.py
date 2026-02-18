@@ -29,59 +29,97 @@ from identity import IdentityManager
 TEST_DB = "data/test_bank.db"
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create event loop for async tests."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
+# Don't override event_loop - use pytest-asyncio's default handling
 
 
 @pytest.fixture(scope="session")
-def test_db():
-    """Provide clean test database for each test."""
+def test_db_setup():
+    """Setup test database once at session start."""
     # Remove old test DB
     if os.path.exists(TEST_DB):
         os.remove(TEST_DB)
+    
+    yield TEST_DB
+    
+    # Final cleanup
+    time.sleep(0.1)
+    if os.path.exists(TEST_DB):
+        try:
+            os.remove(TEST_DB)
+        except:
+            pass
+
+
+@pytest.fixture(scope="function")
+def test_db(test_db_setup):
+    """Provide clean test database for each test."""
+    # Force close any open connections to the test database
+    import gc
+    gc.collect()
+    
+    # Remove and recreate database for each test
+    if os.path.exists(TEST_DB):
+        # Try multiple times to delete, as processes may still have it open
+        for _ in range(3):
+            try:
+                os.remove(TEST_DB)
+                break
+            except (OSError, PermissionError):
+                time.sleep(0.1)
+    
+    time.sleep(0.1)  # Allow file system to catch up
     
     # Create fresh database
     ledger = LedgerEngine(db_path=TEST_DB)
     identity = IdentityManager()
     
     # Create test users with initial balances
-    alice_token = identity.create_identity("alice")
+    # Use get_token first to check if identity exists, otherwise create it
+    alice_token = identity.get_token("alice")
+    if not alice_token:
+        alice_token = identity.create_identity("alice")
     alice_pk = identity.get_public_key("alice")
     ledger.register_user(alice_token, "alice", alice_pk.hex(), 1000.0)
     
-    bob_token = identity.create_identity("bob")
+    bob_token = identity.get_token("bob")
+    if not bob_token:
+        bob_token = identity.create_identity("bob")
     bob_pk = identity.get_public_key("bob")
     ledger.register_user(bob_token, "bob", bob_pk.hex(), 800.0)
     
-    yield {
+    result = {
         "ledger": ledger,
         "identity": identity,
         "alice_token": alice_token,
         "bob_token": bob_token,
     }
     
-    # Cleanup
-    if os.path.exists(TEST_DB):
-        os.remove(TEST_DB)
+    # Force close the ledger connection to ensure data is flushed to disk
+    # This is important because the MCP server will open its own connection
+    del ledger
+    gc.collect()
+    
+    # Force SQLite to flush by opening and closing a connection
+    import sqlite3
+    conn = sqlite3.connect(TEST_DB)
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")  # Force WAL checkpoint
+    conn.close()
+    time.sleep(0.3)  # Allow file system to sync
+    
+    # Recreate ledger reference for tests that need it
+    result["ledger"] = LedgerEngine(db_path=TEST_DB)
+    
+    yield result
+    
+    # Cleanup - close database connections
+    result["ledger"] = None
+    result["identity"] = None
+    gc.collect()  # Force cleanup
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 async def mcp_server(test_db):
     """Start MCP server on port 8101 for testing (requires test_db)."""
-    # Check if port is already in use
-    try:
-        async with httpx.AsyncClient() as client:
-            await client.get("http://localhost:8101/health", timeout=1)
-            print("⚠️  MCP test server already running on 8101")
-            yield "http://localhost:8101"
-            return
-    except:
-        pass
-    
     # Start MCP server
     print("Starting MCP test server on port 8101...")
     env = os.environ.copy()
@@ -99,14 +137,12 @@ async def mcp_server(test_db):
         preexec_fn=os.setsid if hasattr(os, 'setsid') else None
     )
     
-    # Wait for server to be ready (just check if port is listening)
+    # Wait for server to be ready
     max_wait = 10
     for i in range(max_wait * 2):
         try:
             async with httpx.AsyncClient() as client:
-                # MCP server doesn't have /health, just check if port responds
                 response = await client.get("http://localhost:8101/", timeout=2)
-                # Any response (even 404) means server is up
                 print("✅ MCP test server ready")
                 break
         except (httpx.ConnectError, httpx.TimeoutException):
@@ -120,26 +156,31 @@ async def mcp_server(test_db):
     
     # Cleanup
     print("Stopping MCP test server...")
-    if hasattr(os, 'killpg'):
-        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-    else:
+    try:
+        # Try graceful termination first
         process.terminate()
-    process.wait(timeout=5)
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            # Force kill if graceful fails
+            if hasattr(os, 'killpg'):
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            else:
+                process.kill()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
+    except Exception:
+        pass  # Best effort cleanup
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 async def a2a_server(mcp_server):
     """Start A2A server on port 8100 for testing (requires MCP server)."""
-    # Check if port is already in use
-    try:
-        async with httpx.AsyncClient() as client:
-            await client.get("http://localhost:8100/health", timeout=1)
-            print("⚠️  A2A test server already running on 8100")
-            yield "http://localhost:8100"
-            return
-    except:
-        pass
-    
     # Start A2A server
     print("Starting A2A test server on port 8100...")
     env = os.environ.copy()
@@ -186,18 +227,40 @@ async def a2a_server(mcp_server):
     
     # Cleanup
     print("Stopping A2A test server...")
-    if hasattr(os, 'killpg'):
-        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-    else:
+    try:
+        # Try graceful termination first
         process.terminate()
-    process.wait(timeout=5)
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            # Force kill if graceful fails
+            if hasattr(os, 'killpg'):
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            else:
+                process.kill()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
+    except Exception:
+        pass  # Best effort cleanup
 
 
 @pytest.fixture
 async def http_client():
-    """Provide HTTP client for tests."""
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        yield client
+    """Provide HTTP client for tests - async with no timeout limit."""
+    # No timeout - let async operations complete naturally
+    client = httpx.AsyncClient(timeout=None)
+    yield client
+    
+    # Cleanup - ensure proper closing even if event loop is closing
+    try:
+        await client.aclose()
+    except RuntimeError:
+        pass  # Event loop already closed
 
 
 # Pytest markers

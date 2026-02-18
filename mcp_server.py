@@ -36,9 +36,13 @@ def init_context(username: str, db_path: Optional[str] = None) -> None:
     _session_token = _identity.get_token(username)
     if not _session_token:
         raise ValueError(f"User {username} not found")
-    pk = _identity.get_public_key(username)
-    if pk:
-        _ledger.register_user(_session_token, username, pk.hex())
+    
+    # Only register user if they don't already exist in the ledger
+    existing_user = _ledger._get_user(_session_token)
+    if not existing_user:
+        pk = _identity.get_public_key(username)
+        if pk:
+            _ledger.register_user(_session_token, username, pk.hex())
 
 
 @mcp.tool()
@@ -68,30 +72,80 @@ def list_my_accounts() -> str:
 
 @mcp.tool()
 def send_money(to: str, amount: float, note: str) -> str:
-    """Send money from your checking account to another user."""
+    """
+    Send money from your checking account to another user.
+    
+    Args:
+        to: Username of recipient
+        amount: Amount to send (must be positive)
+        note: Description of payment
+        
+    Returns:
+        Success message or detailed error
+    """
     if not _ledger or not _identity or not _username or not _session_token:
-        return "ERROR: Not initialized"
+        return "ERROR: Service not initialized"
+    
+    # Validate inputs
+    if not to or not note:
+        return "FAILED: Recipient username and note are required."
+    if amount <= 0:
+        return "FAILED: Amount must be positive."
+    
+    # Check balance first for better error message
+    balance = _ledger.get_balance(_session_token, "checking")
+    if balance < amount:
+        return f"FAILED: Insufficient funds. Balance: ${balance:.2f}, Requested: ${amount:.2f}"
+    
+    # Verify recipient exists
+    recipient_token = _ledger.get_token_by_username(to)
+    if not recipient_token:
+        return f"FAILED: User '{to}' not found."
+    
+    # Sign and execute transfer
     sig = _identity.sign_message(_username, f"{to}{amount}{note}".encode())
     success = _ledger.transfer(
         _session_token, to, amount, note, "checking", "checking", signature=sig.hex()
     )
-    return (
-        f"Transferred ${amount:.2f} to {to}."
-        if success
-        else "FAILED: Check funds or username."
-    )
+    
+    if success:
+        return f"Transferred ${amount:.2f} to {to}."
+    else:
+        return "FAILED: Transfer could not be completed."
 
 
 @mcp.tool()
 def request_money(from_user: str, amount: float, note: str) -> str:
-    """Request payment from another user."""
+    """
+    Request payment from another user.
+    
+    Args:
+        from_user: Username to request payment from
+        amount: Amount to request (must be positive)
+        note: Reason for request
+        
+    Returns:
+        Success message or detailed error
+    """
     if not _ledger or not _session_token:
-        return "ERROR: Not initialized"
+        return "ERROR: Service not initialized"
+    
+    # Validate inputs
+    if not from_user or not note:
+        return "FAILED: Username and note are required."
+    if amount <= 0:
+        return "FAILED: Amount must be positive."
+    
+    # Check if user exists
+    target_token = _ledger.get_token_by_username(from_user)
+    if not target_token:
+        return f"FAILED: User '{from_user}' not found."
+    
     success = _ledger.request_funds(_session_token, from_user, amount, note)
     return (
         f"Requested ${amount:.2f} from {from_user}."
         if success
-        else "FAILED: User not found."
+        else "FAILED: Request could not be created."
     )
 
 

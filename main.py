@@ -144,35 +144,97 @@ def chat_sync(a2a_url: str, user: str):
 
             print("[Processing...]")
             
-            # Call triage agent via A2A HTTP
-            response = requests.post(
-                f"{a2a_url}/a2a/triage/v1/message",
-                json={
-                    "message": {
-                        "parts": [{"kind": "text", "text": user_input}],
-                        "contextId": context_id
-                    }
-                },
-                timeout=30
-            )
+            # Call triage agent via A2A HTTP with streaming support
+            # Use streaming endpoint for real-time responses
+            use_streaming = True  # Enable streaming for better UX
             
-            if response.status_code == 200:
-                data = response.json()
-                # Extract text from response parts
-                text = ""
-                for part in data.get("parts", []):
-                    if part.get("kind") == "text":
-                        text += part.get("text", "")
+            if use_streaming:
+                endpoint = f"{a2a_url}/a2a/triage/v1/message:stream"
                 
-                # Clean up tool call markup and formatting
-                cleaned_text = clean_agent_response(text)
+                # Stream response with SSE
+                response = requests.post(
+                    endpoint,
+                    json={
+                        "message": {
+                            "parts": [{"kind": "text", "text": user_input}],
+                            "contextId": context_id
+                        }
+                    },
+                    stream=True,
+                    timeout=None  # No timeout for streaming
+                )
                 
-                if cleaned_text:
-                    print(f"\n{cleaned_text}\n")
+                if response.status_code == 200:
+                    print()  # New line before streaming output
+                    full_text = ""
+                    
+                    for line in response.iter_lines():
+                        if line:
+                            line_str = line.decode('utf-8')
+                            if line_str.startswith('data: '):
+                                data_str = line_str[6:]  # Remove 'data: ' prefix
+                                
+                                if data_str == '[DONE]':
+                                    break
+                                
+                                try:
+                                    data = json.loads(data_str)
+                                    if 'result' in data:
+                                        for part in data['result'].get('parts', []):
+                                            if part.get('kind') == 'text':
+                                                text = part.get('text', '')
+                                                full_text += text
+                                    elif 'error' in data:
+                                        print(f"❌ Error: {data['error'].get('message', 'Unknown error')}")
+                                        break
+                                except json.JSONDecodeError:
+                                    pass
+                    
+                    # Filter tool calls and Thai text from final response
+                    import re
+                    clean_text = re.sub(r'<tool_call>.*?</tool_call>', '', full_text, flags=re.DOTALL)
+                    clean_text = re.sub(r'\{[^}]*"name"[^}]*"send_money"[^}]*\}', '', clean_text)
+                    clean_text = re.sub(r'\{[^}]*"name"[^}]*"arguments"[^}]*\}', '', clean_text)
+                    # Remove Thai text (Unicode range 0e00-0e7f)
+                    clean_text = re.sub(r'[\u0e00-\u0e7f]+', '', clean_text)
+                    clean_text = clean_text.strip()
+                    
+                    if clean_text:
+                        print(clean_text)
+                    
+                    print()  # Final newline
                 else:
-                    print("\nNo response received. Please try again.\n")
+                    print(f"❌ Error: HTTP {response.status_code}")
             else:
-                print(f"Error: HTTP {response.status_code}")
+                # Non-streaming fallback
+                response = requests.post(
+                    f"{a2a_url}/a2a/triage/v1/message",
+                    json={
+                        "message": {
+                            "parts": [{"kind": "text", "text": user_input}],
+                            "contextId": context_id
+                        }
+                    },
+                    timeout=60
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    # Extract text from response parts
+                    text = ""
+                    for part in data.get("parts", []):
+                        if part.get("kind") == "text":
+                            text += part.get("text", "")
+                    
+                    # Clean up tool call markup and formatting
+                    cleaned_text = clean_agent_response(text)
+                    
+                    if cleaned_text:
+                        print(f"\n{cleaned_text}\n")
+                    else:
+                        print("\nNo response received. Please try again.\n")
+                else:
+                    print(f"❌ Error: HTTP {response.status_code}")
                 
         except KeyboardInterrupt:
             break

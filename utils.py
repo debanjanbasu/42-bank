@@ -3,13 +3,34 @@ import os
 import re
 import subprocess
 import urllib.request
-from typing import Optional
+from typing import Optional, Any
 from dotenv import load_dotenv
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.azure import AzureAIClient
 from azure.identity.aio import DefaultAzureCredential
+from openai import AsyncOpenAI
+from openai._base_client import AsyncAPIClient
+import httpx
 
 load_dotenv()
+
+
+async def _patched_request(self, *args, **kwargs):
+    """Patched request method that adds system_fingerprint to responses."""
+    # Call original httpx request
+    response = await self._client.request(*args, **kwargs)
+    
+    # Patch JSON responses to add system_fingerprint if missing
+    original_json = response.json
+    
+    def patched_json():
+        data = original_json()
+        if isinstance(data, dict) and "system_fingerprint" not in data:
+            data["system_fingerprint"] = "foundry-local"
+        return data
+    
+    response.json = patched_json
+    return response
 
 
 def create_chat_client(mode: str = "local", model_name: Optional[str] = None):
@@ -17,9 +38,21 @@ def create_chat_client(mode: str = "local", model_name: Optional[str] = None):
     if mode == "local":
         endpoint = get_foundry_local_endpoint()
         model_id = model_name or os.getenv("MODEL_NAME", "qwen2.5-14b-instruct-generic-gpu:4")
-        return OpenAIChatClient(
-            model_id=model_id, api_key="local-dev-key", base_url=endpoint
+        
+        # Create custom AsyncOpenAI client
+        async_client = AsyncOpenAI(
+            api_key="local-dev-key",
+            base_url=endpoint
         )
+        
+        # Monkey-patch the _request method to add system_fingerprint
+        async_client._client.request = _patched_request.__get__(async_client._client, type(async_client._client))
+        
+        client = OpenAIChatClient(
+            model_id=model_id,
+            async_client=async_client
+        )
+        return client
     else:
         project_endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT")
         if not project_endpoint:
@@ -37,12 +70,52 @@ def create_chat_client(mode: str = "local", model_name: Optional[str] = None):
 def get_foundry_local_endpoint() -> str:
     """
     Dynamically discover Foundry Local endpoint.
-    Foundry runs on a random port each time - use `foundry service status` to discover it.
+    Foundry runs on a random port each time - scan for it or use environment variable.
     """
-    # Try environment variable first (allows manual override)
+    # Try environment variable first (but validate it's still working)
     env_endpoint = os.getenv("FOUNDRY_LOCAL_ENDPOINT")
     if env_endpoint:
-        return env_endpoint
+        try:
+            req = urllib.request.Request(f"{env_endpoint}/models", method="GET")
+            with urllib.request.urlopen(req, timeout=2) as response:
+                if response.status == 200:
+                    return env_endpoint
+        except Exception:
+            pass  # Cached endpoint not working, try discovery
+    
+    # Try to find foundry process and extract port from its output/listening ports
+    try:
+        # Check for listening ports used by foundry process
+        result = subprocess.run(
+            ["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            # Look for foundry process listening ports
+            for line in result.stdout.split('\n'):
+                lower_line = line.lower()
+                # Look specifically for Inference.Service.Agent (Foundry), not just any Python process
+                if 'inference' in lower_line or ('foundry' in lower_line and 'python' not in lower_line):
+                    # Extract port from line like: "Inference 46045 ... 127.0.0.1:55028 (LISTEN)"
+                    match = re.search(r'127\.0\.0\.1:(\d+)\s+\(LISTEN\)', line)
+                    if not match:
+                        # Try format: "*:PORT (LISTEN)"
+                        match = re.search(r'\*:(\d+)\s+\(LISTEN\)', line)
+                    if match:
+                        port = match.group(1)
+                        endpoint = f"http://127.0.0.1:{port}/v1"
+                        # Validate it's actually foundry by checking /v1/models
+                        try:
+                            req = urllib.request.Request(f"{endpoint}/models", method="GET")
+                            with urllib.request.urlopen(req, timeout=2) as response:
+                                if response.status == 200:
+                                    return endpoint
+                        except Exception:
+                            continue
+    except Exception:
+        pass
     
     # Get from foundry service status
     try:
@@ -52,18 +125,43 @@ def get_foundry_local_endpoint() -> str:
             text=True,
             timeout=10
         )
-        if result.returncode == 0:
+        if result.returncode == 0 and "running" in result.stdout.lower():
             # Output: "🟢 Model management service is running on http://127.0.0.1:57069/openai/status"
             # Extract: http://127.0.0.1:57069
             match = re.search(r'http://([^/:\s]+):(\d+)', result.stdout)
             if match:
                 host, port = match.groups()
-                return f"http://{host}:{port}/v1"
+                endpoint = f"http://{host}:{port}/v1"
+                # Validate endpoint before returning
+                try:
+                    req = urllib.request.Request(f"{endpoint}/models", method="GET")
+                    with urllib.request.urlopen(req, timeout=2) as response:
+                        if response.status == 200:
+                            return endpoint
+                except Exception:
+                    pass
     except Exception:
         pass
     
+    # Fallback: Scan common ports range where foundry typically runs
+    # Foundry uses random high ports, so scan 49152-65535 (ephemeral port range)
+    # But limit to a reasonable subset to avoid slow scans
+    import random
+    sample_ports = [8000, 8080, 8888, 9000] + random.sample(range(49152, 65535), 50)
+    
+    for port in sample_ports:
+        try:
+            endpoint = f"http://127.0.0.1:{port}/v1"
+            req = urllib.request.Request(f"{endpoint}/models", method="GET")
+            with urllib.request.urlopen(req, timeout=0.5) as response:
+                if response.status == 200:
+                    return endpoint
+        except Exception:
+            continue
+    
     raise RuntimeError(
-        "Foundry Local not running or not found.\n"
+        "Foundry Local not running or not responding.\n"
         "Start with: foundry model run qwen2.5-14b-instruct-generic-gpu:4\n"
+        "Or set FOUNDRY_LOCAL_ENDPOINT environment variable to the endpoint.\n"
         "Check status: foundry service status"
     )

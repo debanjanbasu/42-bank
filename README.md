@@ -6,7 +6,7 @@ A **quantum-safe multi-agent banking platform** built with Microsoft Agent Frame
 
 - 🤖 **5 Specialized Agents** - Triage, Inquiry, Transaction, Advisor, Manager
 - 🔌 **MCP Protocol** - 9 banking tools via Model Context Protocol Streamable HTTP
-- 🔗 **A2A Protocol** - Agent delegation using `agent.as_tool()`
+- 🔗 **A2A Protocol** - Agent routing via HTTP streaming (Server-Sent Events)
 - 🔒 **Post-Quantum Security** - ML-DSA-44 (Dilithium) transaction signatures  
 - ☁️ **Azure Ready** - Deploy with Azure Functions + AI Agent Service
 - 🏠 **Local Development** - Same architecture locally and in production
@@ -52,10 +52,10 @@ uv run main.py --user alice
 ```
 User Query
    ↓
-CLI (main.py) - HTTP POST
+CLI (main.py) - HTTP POST with streaming
    ↓
 A2A Server :8000 → Triage Agent
-   ↓ agent.as_tool()
+   ↓ HTTP POST /a2a/{agent}/v1/message (or :stream)
 Specialist Agents (Inquiry/Transaction/Advisor/Manager)
    ↓ MCPStreamableHTTPTool
 MCP Server :8001/mcp → 9 Banking Tools
@@ -66,7 +66,7 @@ SQLite Database + ML-DSA-44 Signatures
 ### Components
 
 **5 Agents** (in `bank_agents/`)
-- **Triage** - Routes queries to specialists
+- **Triage** - Routes queries to specialists via A2A HTTP
 - **Inquiry** - Balance, history, account list
 - **Transaction** - Send/request money, approvals
 - **Advisor** - Products, account opening
@@ -79,7 +79,7 @@ SQLite Database + ML-DSA-44 Signatures
 
 **Protocols**
 - **MCP Streamable HTTP** - Tools at `/mcp` endpoint (JSON-RPC 2.0)
-- **A2A** - Agents via `agent.as_tool()` delegation
+- **A2A Streaming** - Agent routing via HTTP with Server-Sent Events (SSE)
 - **ML-DSA-44** - Post-quantum signatures (FIPS 204)
 
 ---
@@ -394,10 +394,11 @@ MIT License - See LICENSE file
 ---
 
 **Status:** ✅ Production Ready  
-**Updated:** 2026-02-17  
-**Code:** ~1,900 lines  
-**Protocols:** MCP + A2A  
-**Security:** ML-DSA-44 (Post-Quantum)
+**Updated:** 2026-02-18  
+**Code:** ~2,350 lines  
+**Protocols:** MCP + A2A Streaming  
+**Security:** ML-DSA-44 (Post-Quantum)  
+**Tests:** 26/26 passing ✅
 
 ---
 

@@ -28,23 +28,24 @@ AGENT_CONFIGS = {
     "triage": {
         "name": "TriageAgent",
         "instructions": (
-            "You are the 42 Bank Receptionist. YOUR ONLY JOB IS ROUTING. "
-            "1. IF query is about MONEY MOVEMENT (send, transfer, request, pay, approve) -> CALL 'handoff_to_TransactionAgent()'. "
-            "2. IF query is about STATUS (balance, history, accounts) -> CALL 'handoff_to_InquiryAgent()'. "
-            "3. IF query is about PRODUCTS (loans, cards, mortgages, advice) -> CALL 'handoff_to_AdvisorAgent()'. "
-            "4. IF query is general help or oversight -> CALL 'handoff_to_BankManager()'. "
-            "NEVER try to answer yourself. NEVER ask for more info. ALWAYS use a handoff tool immediately."
+            "You are TriageAgent. CALL HANDOFF TOOL IMMEDIATELY. NO TEXT.\n\n"
+            "RULES:\n"
+            "1. balance/account/money/history → handoff_to_InquiryAgent()\n"
+            "2. send/transfer/pay → handoff_to_TransactionAgent()\n"
+            "3. product/loan/card → handoff_to_AdvisorAgent()\n"
+            "4. problem/complaint → handoff_to_BankManager()\n\n"
+            "DO NOT SAY ANYTHING. JUST CALL THE TOOL."
         ),
         "tools": None,
     },
     "transaction": {
         "name": "TransactionAgent",
         "instructions": (
-            "You are the Transaction Specialist. "
-            "1. REVIEW conversation history to see what user needs to move. "
-            "2. USE 'send_money', 'request_money', or 'approve_payment'. "
-            "3. REPORT the result and STOP. "
-            "4. IF user wants balance or history -> CALL 'handoff_to_TriageAgent()'."
+            "You are TransactionAgent. Execute transfers immediately.\n\n"
+            "1. CALL send_money/request_money/approve_payment NOW\n"
+            "2. Report result clearly\n"
+            "3. STOP. Do not chat.\n\n"
+            "If user needs balance/history → handoff_to_TriageAgent()"
         ),
         "tools": [
             "send_money",
@@ -56,33 +57,36 @@ AGENT_CONFIGS = {
     "inquiry": {
         "name": "InquiryAgent",
         "instructions": (
-            "You are the Inquiry Specialist. "
-            "1. REVIEW conversation history to see what user needs. "
-            "2. USE 'check_balance' for balance, 'view_history' for history, or 'list_my_accounts'. "
-            "3. REPORT the result and STOP. "
-            "4. NEVER ask for account numbers. "
-            "5. IF user wants to move money -> CALL 'handoff_to_TriageAgent()'."
+            "You are InquiryAgent. IMMEDIATELY call the tool when you receive ANY request.\n\n"
+            "RULES:\n"
+            "1. 'balance' (or task:balance) → check_balance() NOW\n"
+            "2. 'history' (or task:history) → view_history() NOW\n"
+            "3. 'accounts' (or task:accounts) → list_my_accounts() NOW\n"
+            "4. If unclear → check_balance() by default\n\n"
+            "Report results after calling tool. Never return None.\n"
+            "If user needs transfer → handoff_to_TriageAgent()"
         ),
         "tools": ["check_balance", "view_history", "list_my_accounts"],
     },
     "advisor": {
         "name": "AdvisorAgent",
         "instructions": (
-            "You are the Financial Advisor. "
-            "1. IF user wants products -> CALL 'list_products()'. "
-            "2. IF user wants new account -> CALL 'open_new_account(account_type)'. "
-            "3. After answering, STOP. DO NOT CHAT. "
-            "IF they want balance, history, or to move money -> CALL 'handoff_to_TriageAgent()'."
+            "You are AdvisorAgent. Execute product queries immediately.\n\n"
+            "1. 'products' → list_products() NOW\n"
+            "2. 'open account' → open_new_account(type) NOW\n"
+            "3. Report results, STOP\n\n"
+            "If user needs balance/transfer → handoff_to_TriageAgent()"
         ),
         "tools": ["list_products", "open_new_account"],
     },
     "manager": {
         "name": "BankManager",
         "instructions": (
-            "You are the Bank Manager. Oversight only. "
-            "1. IF user asks high-level questions -> answer clearly and STOP. "
-            "2. IF user needs specific actions (balance, transfer) -> CALL 'handoff_to_TriageAgent()'. "
-            "DO NOT CHAT. DO NOT ASK FOR INFO."
+            "You are BankManager. Handle escalations only.\n\n"
+            "1. Answer high-level questions clearly\n"
+            "2. STOP. Do not chat.\n"
+            "3. If user needs actions → handoff_to_TriageAgent()\n\n"
+            "Never ask unnecessary questions."
         ),
         "tools": [
             "check_balance",

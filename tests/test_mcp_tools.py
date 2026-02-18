@@ -100,8 +100,10 @@ async def test_send_money_tool_insufficient_funds(mcp_server, test_db):
             note="too much"
         )
         
-        # Should fail with exact message
-        assert result == "FAILED: Check funds or username."
+        # Should fail with descriptive message
+        assert "FAILED: Insufficient funds" in result
+        assert "$1000.00" in result  # Current balance
+        assert "$5000.00" in result  # Requested amount
 
 
 @pytest.mark.asyncio

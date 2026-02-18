@@ -13,7 +13,9 @@ Authentication modes:
 import os
 import asyncio
 import json
+import sys
 import uuid
+import httpx
 from typing import Optional, Dict, Any, List, Callable
 
 from starlette.applications import Starlette
@@ -159,9 +161,16 @@ AGENT_SKILLS = {
 class A2AAgentHandler:
     """Handles A2A protocol requests for a single agent."""
 
-    def __init__(self, agent: Agent, agent_key: str):
+    def __init__(self, agent: Agent, agent_key: str, all_agents: Dict[str, Agent] = None, base_url: str = "http://localhost:8000"):
         self.agent = agent
         self.agent_key = agent_key
+        self.all_agents = all_agents or {}
+        self.base_url = base_url
+        
+        # Create httpx async client for A2A routing (only for triage)
+        self.http_client = None
+        if agent_key == "triage":
+            self.http_client = httpx.AsyncClient(timeout=None)
 
     def get_agent_card(self, base_url: str) -> Dict[str, Any]:
         """Return A2A Agent Card for discovery."""
@@ -176,8 +185,8 @@ class A2AAgentHandler:
             "defaultOutputModes": ["text"],
         }
 
-    async def handle_message(self, request: Request) -> Dict[str, Any]:
-        """Handle A2A message request."""
+    async def handle_message(self, request: Request, use_streaming: bool = False):
+        """Handle A2A message request with optional streaming."""
         body = await request.json()
         message = body.get("message", {})
         context_id = message.get("contextId") or str(uuid.uuid4())
@@ -187,25 +196,149 @@ class A2AAgentHandler:
             if part.get("kind") == "text":
                 user_text += part.get("text", "")
 
-        try:
-            response = await self.agent.run(user_text)
-            response_text = ""
-            for msg in response.messages:
-                for content in msg.contents:
-                    if hasattr(content, "text") and content.text:
-                        response_text += content.text
+        # Special handling for triage: route via A2A HTTP streaming to target agent
+        if self.agent_key == "triage" and self.all_agents:
+            return await self._handle_triage_routing(user_text, context_id, body, request, use_streaming)
+        
+        # Normal agent execution with streaming support
+        return await self._handle_agent_execution(user_text, context_id, use_streaming)
 
-            # Return JSON-RPC formatted response
+    async def _handle_triage_routing(self, user_text: str, context_id: str, original_body: dict, request: Request, use_streaming: bool):
+        """Route via A2A protocol using direct HTTP."""
+        try:
+            # Get routing decision from triage agent
+            response = await self.agent.run(user_text)
+            response_text = response.text.strip() if hasattr(response, 'text') else str(response)
+            
+            # Parse agent name - expect format like "InquiryAgent" or "inquiry"
+            target_agent_name = response_text.replace("Agent", "").lower()
+            
+            # Map to valid agent keys
+            if target_agent_name == "bankmanager":
+                target_key = "manager"
+            elif target_agent_name in {"inquiry", "transaction", "advisor", "manager"}:
+                target_key = target_agent_name
+            else:
+                target_key = None
+            
+            if target_key:
+                
+                # Forward to target agent via HTTP
+                target_url = f"{self.base_url}/a2a/{target_key}/v1/message"
+                if use_streaming:
+                    target_url += ":stream"
+                
+                # Forward the original message
+                target_response = await self.http_client.post(
+                    target_url,
+                    json=original_body,
+                    headers={"Content-Type": "application/json"}
+                )
+                
+                if use_streaming:
+                    # Forward streaming response
+                    return StreamingResponse(
+                        target_response.aiter_bytes(),
+                        media_type="text/event-stream",
+                        headers={
+                            "Cache-Control": "no-cache",
+                            "X-Accel-Buffering": "no"
+                        }
+                    )
+                else:
+                    # Forward JSON response
+                    return target_response.json()
+            else:
+                return {
+                    "result": {
+                        "kind": "message",
+                        "role": "agent",
+                        "parts": [{"kind": "text", "text": f"I don't understand how to help with that request."}],
+                        "messageId": str(uuid.uuid4()),
+                        "contextId": context_id,
+                    }
+                }
+        except Exception as e:
+            import traceback
+            traceback.print_exc(file=sys.stderr)
             return {
                 "result": {
                     "kind": "message",
                     "role": "agent",
-                    "parts": [{"kind": "text", "text": response_text}],
+                    "parts": [{"kind": "text", "text": f"Error: {e}"}],
                     "messageId": str(uuid.uuid4()),
                     "contextId": context_id,
                 }
             }
+
+    async def _handle_agent_execution(self, user_text: str, context_id: str, use_streaming: bool):
+        """Execute agent with optional streaming."""
+        try:
+            if use_streaming:
+                # Use agent streaming
+                response_stream = await self.agent.run(user_text, stream=True)
+                
+                async def generate_sse():
+                    """Generate Server-Sent Events from agent stream."""
+                    try:
+                        async for update in response_stream:
+                            # Stream incremental updates as SSE
+                            if hasattr(update, 'text') and update.text:
+                                event_data = {
+                                    "result": {
+                                        "kind": "message",
+                                        "role": "agent",
+                                        "parts": [{"kind": "text", "text": update.text}],
+                                        "messageId": str(uuid.uuid4()),
+                                        "contextId": context_id,
+                                    }
+                                }
+                                yield f"data: {json.dumps(event_data)}\n\n"
+                        
+                        # Send final done event
+                        yield "data: [DONE]\n\n"
+                    except Exception as e:
+                        error_data = {
+                            "error": {
+                                "message": str(e),
+                                "contextId": context_id
+                            }
+                        }
+                        yield f"data: {json.dumps(error_data)}\n\n"
+                
+                return StreamingResponse(
+                    generate_sse(),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "X-Accel-Buffering": "no"
+                    }
+                )
+            else:
+                # Non-streaming response
+                response = await self.agent.run(user_text)
+                response_text = response.text.strip()
+                
+                # Strip tool call XML that shouldn't be in final output
+                import re
+                response_text = re.sub(r'<tool_call>.*?</tool_call>', '', response_text, flags=re.DOTALL).strip()
+                
+                if not response_text or response_text == "None":
+                    response_text = "I've processed your request."
+                
+                return {
+                    "result": {
+                        "kind": "message",
+                        "role": "agent",
+                        "parts": [{"kind": "text", "text": response_text}],
+                        "messageId": str(uuid.uuid4()),
+                        "contextId": context_id,
+                    }
+                }
         except Exception as e:
+            print(f"DEBUG: Agent execution error: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
             return {
                 "result": {
                     "kind": "message",
@@ -227,6 +360,8 @@ def create_a2a_app(
     api_key: Optional[str] = None,
     require_auth: bool = False,
     mcp_server_url: str = "http://localhost:8001",
+    host: str = "0.0.0.0",
+    port: int = 8000,
 ) -> Starlette:
     """Create A2A server application with MCP tool integration."""
     client = create_chat_client(mode, model_name)
@@ -241,16 +376,8 @@ def create_a2a_app(
     advisor_agent = advisor.get_agent(client, mcp_tools)
     manager_agent = manager.get_agent(client, mcp_tools)
     
-    # Convert specialist agents to tools for triage to call
-    specialist_tools = [
-        inquiry_agent.as_tool(),
-        transaction_agent.as_tool(),
-        advisor_agent.as_tool(),
-        manager_agent.as_tool(),
-    ]
-    
-    # Create triage agent with specialist agents as callable tools
-    triage_agent = triage.get_agent(client, specialist_tools)
+    # Create triage agent WITHOUT tools - it only routes
+    triage_agent = triage.get_agent(client, tools=None)
     
     agents: Dict[str, Agent] = {
         "triage": triage_agent,
@@ -260,7 +387,16 @@ def create_a2a_app(
         "manager": manager_agent,
     }
 
-    handlers = {key: A2AAgentHandler(agent, key) for key, agent in agents.items()}
+    # Create handlers - triage gets access to all agents for routing
+    base_url = f"http://{host}:{port}" if host != "0.0.0.0" else f"http://localhost:{port}"
+    
+    handlers = {}
+    for key, agent in agents.items():
+        if key == "triage":
+            handlers[key] = A2AAgentHandler(agent, key, all_agents=agents, base_url=base_url)
+        else:
+            handlers[key] = A2AAgentHandler(agent, key, base_url=base_url)
+    
     routes = []
 
     for agent_key, handler in handlers.items():
@@ -270,8 +406,16 @@ def create_a2a_app(
             return JSONResponse(h.get_agent_card(base_url))
 
         async def post_message(request: Request, h=handler):
-            result = await h.handle_message(request)
+            """Non-streaming message endpoint."""
+            result = await h.handle_message(request, use_streaming=False)
+            if isinstance(result, StreamingResponse):
+                return result  # Already a response
             return JSONResponse(result)
+
+        async def post_message_stream(request: Request, h=handler):
+            """Streaming message endpoint using Server-Sent Events."""
+            result = await h.handle_message(request, use_streaming=True)
+            return result  # Already a StreamingResponse
 
         path = f"/a2a/{agent_key}"
         routes.append(Route(path, endpoint=get_card, methods=["GET"]))
@@ -279,7 +423,7 @@ def create_a2a_app(
             Route(f"{path}/v1/message", endpoint=post_message, methods=["POST"])
         )
         routes.append(
-            Route(f"{path}/v1/message:stream", endpoint=post_message, methods=["POST"])
+            Route(f"{path}/v1/message:stream", endpoint=post_message_stream, methods=["POST"])
         )
         routes.append(Route(f"{path}/v1/card", endpoint=get_card, methods=["GET"]))
 
@@ -309,10 +453,18 @@ def create_a2a_app(
             }
         )
 
+    async def models_endpoint(request: Request) -> JSONResponse:
+        """Return empty models list - this endpoint is for OpenAI SDK validation."""
+        return JSONResponse({
+            "object": "list",
+            "data": []
+        })
+
     routes.extend(
         [
             Route("/a2a", endpoint=list_agents, methods=["GET"]),
             Route("/health", endpoint=health, methods=["GET"]),
+            Route("/v1/models", endpoint=models_endpoint, methods=["GET"]),
         ]
     )
 
@@ -348,7 +500,7 @@ async def run_a2a_server(
         ledger.register_user(token, username, pk.hex())
 
     app = create_a2a_app(
-        ledger, ident, username, token, mode, model_name, api_key, require_auth, mcp_server_url
+        ledger, ident, username, token, mode, model_name, api_key, require_auth, mcp_server_url, host, port
     )
 
     print(f"A2A Server: http://{host}:{port}")

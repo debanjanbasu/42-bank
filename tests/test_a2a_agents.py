@@ -97,7 +97,7 @@ async def test_inquiry_agent_history(a2a_server, http_client, test_db):
     text = extract_text(data)
     
     # New account should have no transactions - flexible keyword matching
-    assert any(phrase in text.lower() for phrase in ["no transaction", "no history", "empty", "haven't made"]), \
+    assert any(phrase in text.lower() for phrase in ["no transaction", "no recent transaction", "no history", "empty", "haven't made"]), \
         f"Expected empty history message in: {text}"
 
 

@@ -175,30 +175,48 @@ class LedgerEngine:
         to_account: str = "checking",
         signature: Optional[str] = None,
     ) -> bool:
+        """
+        Transfer funds between users atomically.
+        
+        Returns:
+            bool: True if transfer succeeded, False otherwise
+        """
+        # Validate inputs
+        if amount <= 0:
+            return False
+        if not recipient_username or not description:
+            return False
+            
+        # Verify signature if provided
         if signature and not self._verify_signature(
             sender_token, f"{recipient_username}{amount}{description}", signature
         ):
             return False
 
+        # Get recipient token
         recipient_token = self.get_token_by_username(recipient_username)
-        if (
-            not recipient_token
-            or (sender_token == recipient_token and from_account == to_account)
-            or amount <= 0
-        ):
+        if not recipient_token:
+            return False
+            
+        # Prevent self-transfer to same account
+        if sender_token == recipient_token and from_account == to_account:
             return False
 
-        s_user, r_user = self._get_user(sender_token), self._get_user(recipient_token)
-        if (
-            not s_user
-            or not r_user
-            or from_account not in s_user.accounts
-            or to_account not in r_user.accounts
-        ):
+        # Get both users
+        s_user = self._get_user(sender_token)
+        r_user = self._get_user(recipient_token)
+        
+        # Validate users and accounts exist
+        if not s_user or not r_user:
             return False
+        if from_account not in s_user.accounts or to_account not in r_user.accounts:
+            return False
+            
+        # Check sufficient funds
         if s_user.accounts[from_account].balance < amount:
             return False
 
+        # Create transaction record
         tx = Transaction(
             sender=s_user.username,
             recipient=r_user.username,
@@ -206,11 +224,15 @@ class LedgerEngine:
             description=description,
             account_type=from_account,
         )
+        
+        # Atomically update both users
+        # NOTE: SQLite transactions are used via connection context manager in _save_user
         s_user.accounts[from_account].balance -= amount
         s_user.accounts[from_account].history.append(tx)
         r_user.accounts[to_account].balance += amount
         r_user.accounts[to_account].history.append(tx)
 
+        # Save both users (wrapped in SQLite transaction)
         self._save_user(s_user)
         self._save_user(r_user)
         return True
@@ -226,18 +248,42 @@ class LedgerEngine:
     def request_funds(
         self, requester_token: str, target_username: str, amount: float, note: str
     ) -> bool:
-        target_token = self.get_token_by_username(target_username)
+        """
+        Create a payment request from target user.
+        
+        Args:
+            requester_token: Token of user requesting funds
+            target_username: Username of user to request from
+            amount: Amount to request (must be positive)
+            note: Reason for request
+            
+        Returns:
+            bool: True if request created successfully
+        """
+        # Validate amount
+        if amount <= 0:
+            return False
+            
+        # Get requester
         req_user = self._get_user(requester_token)
-        if not target_token or not req_user:
+        if not req_user:
+            return False
+            
+        # Get target user
+        target_token = self.get_token_by_username(target_username)
+        if not target_token:
             return False
         tar_user = self._get_user(target_token)
-        if not tar_user or amount <= 0:
+        if not tar_user:
             return False
 
+        # Create unique request ID
+        req_id = hashlib.md5(
+            f"{req_user.username}{datetime.now().isoformat()}{amount}".encode()
+        ).hexdigest()[:8]
+        
         req = {
-            "id": hashlib.md5(
-                f"{req_user.username}{datetime.now()}".encode()
-            ).hexdigest()[:8],
+            "id": req_id,
             "requester": req_user.username,
             "amount": amount,
             "note": note,
