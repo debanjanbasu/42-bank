@@ -25,6 +25,7 @@ How to Run
 Clone the repository:
 
 git clone https://github.com/Jojo991/VoiceAssistantMobileApp.git
+
 cd VoiceAssistantMobileApp
 
 
@@ -41,3 +42,4 @@ npx expo start
 Open Expo Go on your mobile device and scan the QR code displayed in the terminal or browser.
 
 The app will run on your device for testing.
+
