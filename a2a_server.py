@@ -16,6 +16,7 @@ import json
 import sys
 import uuid
 import httpx
+from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any, List, Callable
 
 from starlette.applications import Starlette
@@ -246,8 +247,21 @@ class A2AAgentHandler:
                         }
                     )
                 else:
-                    # Forward JSON response
-                    return target_response.json()
+                    # Forward JSON response, with error handling for non-200
+                    if target_response.status_code == 200:
+                        try:
+                            return target_response.json()
+                        except Exception:
+                            pass
+                    return {
+                        "result": {
+                            "kind": "message",
+                            "role": "agent",
+                            "parts": [{"kind": "text", "text": f"Error: upstream agent returned status {target_response.status_code}"}],
+                            "messageId": str(uuid.uuid4()),
+                            "contextId": context_id,
+                        }
+                    }
             else:
                 return {
                     "result": {
@@ -473,7 +487,14 @@ def create_a2a_app(
         if api_key or require_auth
         else []
     )
-    return Starlette(routes=routes, middleware=middleware)
+    @asynccontextmanager
+    async def lifespan(app):
+        yield
+        triage_handler = handlers.get("triage")
+        if triage_handler and triage_handler.http_client:
+            await triage_handler.http_client.aclose()
+
+    return Starlette(routes=routes, middleware=middleware, lifespan=lifespan)
 
 
 async def run_a2a_server(

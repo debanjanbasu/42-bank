@@ -103,11 +103,11 @@ class LedgerEngine:
             ).fetchone()
             return UserAccount.model_validate_json(row[0]) if row else None
 
-    def _save_user(self, user: Optional[UserAccount]) -> None:
+    def _save_user(self, user: Optional[UserAccount], conn=None) -> None:
         if not user:
             return
         data = user.model_dump_json()
-        with sqlite3.connect(self.db_path) as conn:
+        if conn is not None:
             conn.execute(
                 "INSERT OR REPLACE INTO users (token, username, data) VALUES (?, ?, ?)",
                 (user.token, user.username, data),
@@ -116,6 +116,16 @@ class LedgerEngine:
                 "INSERT INTO change_feed (event_type, payload) VALUES (?, ?)",
                 ("USER_UPDATE", data),
             )
+        else:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO users (token, username, data) VALUES (?, ?, ?)",
+                    (user.token, user.username, data),
+                )
+                conn.execute(
+                    "INSERT INTO change_feed (event_type, payload) VALUES (?, ?)",
+                    ("USER_UPDATE", data),
+                )
 
     def register_user(
         self,
@@ -232,9 +242,10 @@ class LedgerEngine:
         r_user.accounts[to_account].balance += amount
         r_user.accounts[to_account].history.append(tx)
 
-        # Save both users (wrapped in SQLite transaction)
-        self._save_user(s_user)
-        self._save_user(r_user)
+        # Save both users atomically in a single transaction
+        with sqlite3.connect(self.db_path) as conn:
+            self._save_user(s_user, conn)
+            self._save_user(r_user, conn)
         return True
 
     def open_account(self, token: str, account_type: str) -> bool:
