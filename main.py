@@ -8,11 +8,13 @@ import sys
 import uuid
 import readline
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from bootstrap import bootstrap
 from identity import IdentityManager
 from ledger import LedgerEngine
 from utils import get_foundry_local_endpoint
+from agent_framework._workflows._events import WorkflowEvent
+from agent_framework.orchestrations import HandoffAgentUserRequest
 
 # Configure readline for better input experience
 HISTORY_FILE = Path.home() / ".42bank_history"
@@ -23,14 +25,14 @@ def setup_readline():
     try:
         # Enable tab completion
         readline.parse_and_bind("tab: complete")
-        
+
         # Enable arrow key navigation
         readline.parse_and_bind("set editing-mode emacs")
-        
+
         # Load history from file
         if HISTORY_FILE.exists():
             readline.read_history_file(str(HISTORY_FILE))
-        
+
         # Set history length
         readline.set_history_length(1000)
     except Exception:
@@ -40,12 +42,33 @@ def setup_readline():
 def clean_agent_response(text: str) -> str:
     """Clean up agent response text by removing tool call markup."""
     # Remove <tool_call>...</tool_call> blocks
-    text = re.sub(r'<tool_call>.*?</tool_call>', '', text, flags=re.DOTALL)
+    text = re.sub(r"<tool_call>.*?</tool_call>", "", text, flags=re.DOTALL)
     # Remove Thai/multilingual prefixes (common in model responses)
-    text = re.sub(r'^[\u0E00-\u0E7F\s]+', '', text)
+    text = re.sub(r"^[\u0E00-\u0E7F\s]+", "", text)
     # Remove extra whitespace
-    text = re.sub(r'\n\n+', '\n\n', text.strip())
+    text = re.sub(r"\n\n+", "\n\n", text.strip())
     return text.strip()
+
+
+def handle_events(
+    events: List[WorkflowEvent[Any]],
+) -> List[WorkflowEvent[HandoffAgentUserRequest]]:
+    """Process workflow events and return any human-in-the-loop requests."""
+    hil: List[WorkflowEvent[HandoffAgentUserRequest]] = []
+    for e in events:
+        if e.type == "handoff_sent":
+            source = e.data.source if hasattr(e.data, "source") else "Agent"
+            target = e.data.target if hasattr(e.data, "target") else "Agent"
+            print(f"[Handoff: {source} → {target}]")
+        elif e.type == "request_info" and isinstance(e.data, HandoffAgentUserRequest):
+            for msg in e.data.agent_response.messages:
+                for c in msg.contents:
+                    if c.type == "text":
+                        txt = str(c.text).strip() if c.text else ""
+                        if txt and not txt.startswith("[{"):
+                            print(f"\n{msg.author_name or msg.role}: {txt}\n")
+            hil.append(e)
+    return hil
 
 
 async def chat_async(user: str, a2a_url: str = "http://localhost:8000"):
@@ -53,17 +76,20 @@ async def chat_async(user: str, a2a_url: str = "http://localhost:8000"):
     from identity import IdentityManager
     from ledger import LedgerEngine
     import aiohttp
-    
+
     setup_readline()
     session_id = uuid.uuid4().hex[:8]
-    
+
     # Setup
     ident, ledger = IdentityManager(), LedgerEngine()
     token = ident.get_token(user)
+    if not token:
+        token = ident.create_identity(user)
+    assert token is not None  # Type narrowing for Pylance
     pk = ident.get_public_key(user)
     if pk:
         ledger.register_user(token, user, pk.hex())
-    
+
     print(f"\nConnected to 42 Bank ({user.upper()}). Session: {session_id}")
     print(f"A2A Triage: {a2a_url}/a2a/triage")
     print("Type 'exit', 'quit' or use Ctrl+C to quit.")
@@ -71,7 +97,7 @@ async def chat_async(user: str, a2a_url: str = "http://localhost:8000"):
 
     # Call triage agent - it routes to specialists internally
     triage_url = f"{a2a_url}/a2a/triage/v1/message"
-    
+
     try:
         async with aiohttp.ClientSession() as session:
             while True:
@@ -81,18 +107,14 @@ async def chat_async(user: str, a2a_url: str = "http://localhost:8000"):
                         break
 
                     print("[Processing...]")
-                    
-                    payload = {
-                        "message": {
-                            "parts": [{"kind": "text", "text": prompt}]
-                        }
-                    }
-                    
+
+                    payload = {"message": {"parts": [{"kind": "text", "text": prompt}]}}
+
                     async with session.post(triage_url, json=payload) as resp:
                         if resp.status != 200:
                             print(f"\n❌ Error: HTTP {resp.status}")
                             continue
-                        
+
                         result = await resp.json()
                         # Extract text from A2A response
                         if "result" in result and "parts" in result["result"]:
@@ -122,11 +144,11 @@ async def chat_async(user: str, a2a_url: str = "http://localhost:8000"):
 def chat_sync(a2a_url: str, user: str):
     """Synchronous chat interface that calls triage agent via A2A HTTP."""
     import requests
-    
+
     setup_readline()
     session_id = uuid.uuid4().hex[:8]
     context_id = str(uuid.uuid4())
-    
+
     print(f"\nConnected to 42 Bank ({user.upper()}). Session: {session_id}")
     print(f"A2A Endpoint: {a2a_url}")
     print("Type 'exit', 'quit' or use Ctrl+C to quit.")
@@ -135,73 +157,82 @@ def chat_sync(a2a_url: str, user: str):
     while True:
         try:
             user_input = input("You: ").strip()
-            
+
             if user_input.lower() in ["exit", "quit"]:
                 break
-            
+
             if not user_input:
                 continue
 
             print("[Processing...]")
-            
+
             # Call triage agent via A2A HTTP with streaming support
             # Use streaming endpoint for real-time responses
             use_streaming = True  # Enable streaming for better UX
-            
+
             if use_streaming:
                 endpoint = f"{a2a_url}/a2a/triage/v1/message:stream"
-                
+
                 # Stream response with SSE
                 response = requests.post(
                     endpoint,
                     json={
                         "message": {
                             "parts": [{"kind": "text", "text": user_input}],
-                            "contextId": context_id
+                            "contextId": context_id,
                         }
                     },
                     stream=True,
-                    timeout=None  # No timeout for streaming
+                    timeout=None,  # No timeout for streaming
                 )
-                
+
                 if response.status_code == 200:
                     print()  # New line before streaming output
                     full_text = ""
-                    
+
                     for line in response.iter_lines():
                         if line:
-                            line_str = line.decode('utf-8')
-                            if line_str.startswith('data: '):
+                            line_str = line.decode("utf-8")
+                            if line_str.startswith("data: "):
                                 data_str = line_str[6:]  # Remove 'data: ' prefix
-                                
-                                if data_str == '[DONE]':
+
+                                if data_str == "[DONE]":
                                     break
-                                
+
                                 try:
                                     data = json.loads(data_str)
-                                    if 'result' in data:
-                                        for part in data['result'].get('parts', []):
-                                            if part.get('kind') == 'text':
-                                                text = part.get('text', '')
+                                    if "result" in data:
+                                        for part in data["result"].get("parts", []):
+                                            if part.get("kind") == "text":
+                                                text = part.get("text", "")
                                                 full_text += text
-                                    elif 'error' in data:
-                                        print(f"❌ Error: {data['error'].get('message', 'Unknown error')}")
+                                    elif "error" in data:
+                                        print(
+                                            f"❌ Error: {data['error'].get('message', 'Unknown error')}"
+                                        )
                                         break
                                 except json.JSONDecodeError:
                                     pass
-                    
+
                     # Filter tool calls and Thai text from final response
                     import re
-                    clean_text = re.sub(r'<tool_call>.*?</tool_call>', '', full_text, flags=re.DOTALL)
-                    clean_text = re.sub(r'\{[^}]*"name"[^}]*"send_money"[^}]*\}', '', clean_text)
-                    clean_text = re.sub(r'\{[^}]*"name"[^}]*"arguments"[^}]*\}', '', clean_text)
+
+                    clean_text = re.sub(
+                        r"<tool_call>.*?</tool_call>", "", full_text, flags=re.DOTALL
+                    )
+                    clean_text = re.sub(
+                        r'\{[^}]*"name"[^}]*"send_money"[^}]*\}', "", clean_text
+                    )
+                    clean_text = re.sub(
+                        r'\{[^}]*"name"[^}]*"arguments"[^}]*\}', "", clean_text
+                    )
                     # Remove Thai text (Unicode range 0e00-0e7f)
-                    clean_text = re.sub(r'[\u0e00-\u0e7f]+', '', clean_text)
+                    clean_text = re.sub(r"[\u0e00-\u0e7f]+", "", clean_text)
                     clean_text = clean_text.strip()
-                    
+
                     if clean_text:
                         print(clean_text)
-                    
+
                     print()  # Final newline
                 else:
                     print(f"❌ Error: HTTP {response.status_code}")
@@ -212,12 +243,12 @@ def chat_sync(a2a_url: str, user: str):
                     json={
                         "message": {
                             "parts": [{"kind": "text", "text": user_input}],
-                            "contextId": context_id
+                            "contextId": context_id,
                         }
                     },
-                    timeout=60
+                    timeout=60,
                 )
-                
+
                 if response.status_code == 200:
                     data = response.json()
                     # Extract text from response parts
@@ -225,17 +256,17 @@ def chat_sync(a2a_url: str, user: str):
                     for part in data.get("parts", []):
                         if part.get("kind") == "text":
                             text += part.get("text", "")
-                    
+
                     # Clean up tool call markup and formatting
                     cleaned_text = clean_agent_response(text)
-                    
+
                     if cleaned_text:
                         print(f"\n{cleaned_text}\n")
                     else:
                         print("\nNo response received. Please try again.\n")
                 else:
                     print(f"❌ Error: HTTP {response.status_code}")
-                
+
         except KeyboardInterrupt:
             break
         except Exception as e:
@@ -251,7 +282,7 @@ def chat_sync(a2a_url: str, user: str):
 async def chat(agent: Any, mode: str, endpoint: Optional[str] = None):
     """Interactive chat with command history support."""
     setup_readline()
-    
+
     session_id = uuid.uuid4().hex[:8]
     print(f"\nConnected to 42 Bank ({mode.upper()}). Session: {session_id}")
     if endpoint:
@@ -277,7 +308,7 @@ async def chat(agent: Any, mode: str, endpoint: Optional[str] = None):
                     break
 
                 print("[Processing...]")
-                
+
                 # Handle pending human-in-the-loop requests
                 if pending_hil:
                     # Respond to the pending request
@@ -285,15 +316,15 @@ async def chat(agent: Any, mode: str, endpoint: Optional[str] = None):
                     response = await agent.run(
                         prompt,
                         request_info_response={
-                            "request_id": hil_event.data.request_id,
-                            "response": prompt
-                        }
+                            "request_id": hil_event.request_id,
+                            "response": prompt,
+                        },
                     )
                     pending_hil = []
                 else:
                     # Normal message
                     response = await agent.run(prompt)
-                
+
                 events = [
                     WorkflowEvent(
                         type="output", data=response, source_executor_id=agent.id
@@ -397,6 +428,7 @@ def run():
         # Verify A2A server is running
         try:
             import requests
+
             response = requests.get("http://localhost:8000/health", timeout=2)
             if response.status_code != 200:
                 print("\n⚠ A2A server health check failed")
@@ -411,7 +443,7 @@ def run():
 
         # Use A2A protocol for all agent communication
         a2a_url = "http://localhost:8000"
-        
+
         if args.devui:
             print("\nDevUI not supported in A2A mode.")
         else:

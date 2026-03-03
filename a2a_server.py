@@ -166,7 +166,7 @@ class A2AAgentHandler:
         self,
         agent: Agent,
         agent_key: str,
-        all_agents: Dict[str, Agent] = None,
+        all_agents: Optional[Dict[str, Agent]] = None,  # type: ignore[assignment]
         base_url: str = "http://localhost:8000",
     ):
         self.agent = agent
@@ -246,7 +246,7 @@ class A2AAgentHandler:
                     target_url += ":stream"
 
                 # Forward the original message
-                target_response = await self.http_client.post(
+                target_response = await self.http_client.post(  # type: ignore[union-attr]
                     target_url,
                     json=original_body,
                     headers={"Content-Type": "application/json"},
