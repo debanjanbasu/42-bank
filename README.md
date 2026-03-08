@@ -18,6 +18,7 @@ A **quantum-safe multi-agent banking platform** built with Microsoft Agent Frame
 ### Prerequisites
 - [uv](https://github.com/astral-sh/uv) - Python package manager
 - [Foundry Local](https://learn.microsoft.com/azure/ai-foundry/foundry-local/get-started) - Local LLM runtime
+- [Docker Desktop](https://www.docker.com/products/docker-desktop) - Optional, for Cosmos DB emulator
 
 ### Three Terminals
 
@@ -29,8 +30,12 @@ foundry model run qwen2.5-14b-instruct-generic-gpu:4
 
 **Terminal 2: Start Servers**
 ```bash
+# SQLite (default - no Docker required)
 ./dev.sh alice
-# Auto-starts MCP (port 8001) + A2A (port 8000)
+
+# OR Cosmos DB emulator (Docker required)
+docker-compose up -d cosmos-emulator
+DB_MODE=cosmos ./dev.sh alice
 ```
 
 **Terminal 3: Chat**
@@ -88,35 +93,47 @@ SQLite Database + ML-DSA-44 Signatures
 
 ```
 42-bank/
-├── main.py                  # CLI (A2A HTTP client)
-├── a2a_server.py            # A2A server (5 agents)
-├── mcp_server.py            # MCP server (9 tools)
-├── mcp_client.py            # MCPStreamableHTTPTool helper
-├── dev.sh                   # Local development startup
-├── utils.py                 # Shared utilities
-├── ledger.py                # Transaction ledger (SQLite)
-├── identity.py              # ML-DSA-44 cryptography
-├── bootstrap.py             # Database initialization
-├── audit_service.py         # Audit logging
+├── main.py                 # CLI (A2A HTTP client)
+├── a2a_server.py           # A2A server (5 agents)
+├── mcp_server.py           # MCP server (9 tools)
+├── mcp_banking_server.py   # Banking MCP wrapper (NEW)
+├── cosmos_mcp_client.py    # Cosmos DB client (NEW)
+├── mcp_client.py           # MCPStreamableHTTPTool helper
+├── dev.sh                  # Local development startup
+├── utils.py                # Shared utilities
+├── ledger.py               # Transaction ledger (SQLite)
+├── identity.py             # ML-DSA-44 cryptography
+├── bootstrap.py            # Database initialization
+├── audit_service.py        # Audit logging
+├── docker-compose.yml      # Local Cosmos emulator (NEW)
+├── Dockerfile.banking-mcp  # Container build (NEW)
 │
-├── bank_agents/             # Agent definitions
+├── bank_agents/            # Agent definitions
 │   ├── triage.py
 │   ├── inquiry.py
 │   ├── transaction.py
 │   ├── advisor.py
 │   └── manager.py
 │
-├── data/                    # SQLite database
+├── scripts/                # Utility scripts (NEW)
+│   └── init-cosmos-local.py
+│
+├── infra/                  # Azure infrastructure (NEW)
+│   └── main.bicep
+│
+├── data/                   # SQLite database
 │   └── bank.db
 │
-├── tests/                   # Test suite (TODO: E2E tests)
+├── tests/                  # Test suite
 │
-└── README.md                # This file
+├── AZURE_DEPLOYMENT.md     # Azure guide (NEW)
+└── README.md               # This file
 ```
 
-**Lines of Code:** ~1,900 total
-- Core: 9 Python files
+**Lines of Code:** ~2,500 total
+- Core: 12 Python files
 - Agents: 5 specialized agents
+- Infrastructure: Bicep + Docker
 - Clean, focused codebase
 
 ---

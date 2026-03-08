@@ -5,14 +5,17 @@ description = "Managed Banking Agents for Azure AI Agent Service"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-"agent-framework",
-"agent-framework-a2a>=1.0.0b260212",
-"azure-ai-projects",
-"azure-identity",
-"httpx",
-"pqcrypto",
-"pydantic",
-"python-dotenv",
+    "agent-framework",
+    "agent-framework-a2a>=1.0.0b260212",
+    "azure-ai-projects",
+    "azure-identity",
+    "azure-cosmos>=4.7.0",
+    "httpx",
+    "mcp>=1.0.0",
+    "pqcrypto",
+    "pydantic",
+    "python-dotenv",
+    "uvicorn>=0.30.0",
 ]
 
 [project.optional-dependencies]

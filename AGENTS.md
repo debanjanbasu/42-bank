@@ -399,9 +399,151 @@ def transfer(...) -> bool:
 
 ---
 
+## Azure Deployment
+
+### Architecture
+
+42-Bank supports dual deployment:
+- **Local**: SQLite + Foundry Local (default)
+- **Azure**: Cosmos DB + Azure AI Foundry
+
+### Database Abstraction
+
+The `cosmos_mcp_client.py` module provides Cosmos DB integration:
+
+```python
+from cosmos_mcp_client import CosmosMCPClient
+
+# Auto-selects based on environment
+# Cosmos if COSMOS_MCP_URL is set, SQLite otherwise
+```
+
+### Local Development with Cosmos DB Emulator
+
+```bash
+# Start emulator (Docker required)
+docker-compose up -d cosmos-emulator
+
+# Initialize database
+uv run python scripts/init-cosmos-local.py
+
+# Run with Cosmos
+DB_MODE=cosmos ./dev.sh alice
+```
+
+### Azure Deployment Commands
+
+```bash
+# Deploy infrastructure
+az deployment sub create \
+  --location eastus \
+  --template-file infra/main.bicep
+
+# Deploy Cosmos DB MCP Toolkit (Microsoft)
+git clone https://github.com/AzureCosmosDB/MCPToolKit.git
+cd MCPToolKit && azd up
+
+# Deploy Banking MCP Server
+docker build -f Dockerfile.banking-mcp -t 42bank-banking-mcp .
+az containerapp create --name 42bank-banking-mcp --image 42bank-banking-mcp
+```
+
+### Environment Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `DB_MODE` | Database mode | `sqlite` or `cosmos` |
+| `AZURE_COSMOS_CONNECTION_STRING` | Cosmos DB connection | `AccountEndpoint=...;AccountKey=...` |
+| `COSMOS_MCP_URL` | MCP Toolkit URL | `https://cosmos-mcp.azurecontainerapps.io/mcp` |
+| `COSMOS_DATABASE` | Database name | `banking` |
+| `AZURE_AI_PROJECT_ENDPOINT` | Foundry project | `https://42-bank.cognitiveservices.azure.com/` |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Model deployment | `Qwen/Qwen3.5-35B-A3B` |
+
+### Model Selection
+
+- **Qwen3.5-35B-A3B** (recommended): Cheapest MoE, 3B active params
+- **Qwen3.5-27B**: Best instruction-following (95.0 IFEval)
+- **GPT-4o-mini**: OpenAI ecosystem
+
+### Files Created
+
+| File | Purpose |
+|------|---------|
+| `docker-compose.yml` | Local Cosmos emulator setup |
+| `scripts/init-cosmos-local.py` | Database initialization |
+| `cosmos_mcp_client.py` | Cosmos DB MCP client |
+| `mcp_banking_server.py` | Banking MCP wrapper |
+| `Dockerfile.banking-mcp` | Container build |
+| `infra/main.bicep` | Azure infrastructure |
+| `AZURE_DEPLOYMENT.md` | Deployment guide |
+
+---
+
+## Docker Commands
+
+### Cosmos DB Emulator
+
+```bash
+# Start
+docker-compose up -d cosmos-emulator
+
+# Check status
+docker-compose ps
+
+# View logs
+docker-compose logs -f cosmos-emulator
+
+# Stop
+docker-compose down
+
+# Reset data
+docker-compose down -v
+```
+
+### Health Checks
+
+```bash
+# Cosmos emulator
+curl -sk https://localhost:8081/_explorer/index.html
+
+# Data explorer (browser)
+open https://localhost:1234/_explorer/index.html
+
+# Banking MCP server
+curl http://localhost:8002/health
+```
+
+---
+
+## Testing with Cosmos DB
+
+### Integration Tests
+
+```bash
+# Run tests with Cosmos emulator
+DB_MODE=cosmos uv run pytest tests/ -v
+
+# Specific Cosmos tests
+uv run pytest tests/ -m cosmos
+```
+
+### Seed Data
+
+```bash
+# Initialize test data
+uv run python scripts/init-cosmos-local.py
+
+# Verify
+curl -sk https://localhost:8081/_explorer/index.html
+```
+
+---
+
 ## Notes
 
 - **Foundry Local must be running** for integration tests
 - Tests use ports 8100 (A2A) and 8101 (MCP) to avoid conflicts
 - Test database: `data/test_bank.db` (auto-cleaned)
 - Production database: `data/bank.db`
+- **Cosmos emulator** requires Docker and ~2GB RAM
+- **Local development** defaults to SQLite (no Docker required)
