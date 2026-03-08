@@ -5,31 +5,27 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "scheme": "bank42",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.bank42.mobile",
+      "deploymentTarget": "15.1",
       "infoPlist": {
         "NSFaceIDUsageDescription": "Use Face ID to authenticate and sign transactions",
         "UIBackgroundModes": ["remote-notification"]
       },
       "entitlements": {
-        "com.apple.developer.associated-domains": [
-          "applinks:42bank.page.link"
-        ]
+        "com.apple.developer.associated-domains": ["applinks:42bank.page.link"]
       }
     },
     "android": {
       "package": "com.bank42.mobile",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/icon.png",
+        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#1a1a2e"
       },
-      "permissions": [
-        "USE_BIOMETRIC",
-        "USE_FINGERPRINT"
-      ]
+      "permissions": ["USE_BIOMETRIC", "USE_FINGERPRINT"]
     },
     "web": {
       "bundler": "metro",
@@ -38,7 +34,12 @@
     },
     "plugins": [
       "expo-router",
-      "expo-secure-store",
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": "Allow 42-Bank to use Face ID."
+        }
+      ],
       "expo-local-authentication",
       [
         "expo-notifications",
@@ -57,8 +58,14 @@
         "origin": false
       },
       "eas": {
-        "projectId": "your-project-id-here"
+        "projectId": ""
       }
-    }
+    },
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1a1a2e"
+    },
+    "icon": "./assets/icon.png"
   }
 }

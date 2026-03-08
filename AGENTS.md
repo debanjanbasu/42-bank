@@ -4,7 +4,156 @@ Guide for AI coding agents operating in this repository.
 
 ## Project Overview
 
-42-Bank is a quantum-safe multi-agent banking platform using Microsoft Agent Framework with MCP (Model Context Protocol) and A2A (Agent-to-Agent) protocols. Features 5 specialized agents (Triage, Inquiry, Transaction, Advisor, Manager) and 9 banking tools.
+42-Bank is a **mobile-first** quantum-safe multi-agent banking platform using:
+- **Microsoft Agent Framework** with MCP (Model Context Protocol) and A2A (Agent-to-Agent) protocols
+- **Azure Functions** with MCP Extension for serverless MCP tools
+- **React Native / Expo 55** for cross-platform mobile app
+- **ML-DSA-44** post-quantum cryptography for transaction signing
+
+Features 5 specialized agents (Triage, Inquiry, Transaction, Advisor, Manager) and 9 banking tools.
+
+---
+
+## Architecture Decision: SQLite vs Cosmos DB
+
+### Current State (Local Development)
+- **SQLite** is used for local development (`data/bank.db`)
+- Works with `./dev.sh alice` for quick local testing
+- **No external dependencies** required
+
+### Production Deployment
+- **Azure Cosmos DB** for production database
+- **Azure Functions MCP Extension** for serverless MCP tools
+- Hybrid approach: SQLite for dev, Cosmos DB for production
+
+### Why Keep SQLite for Development?
+1. **Zero setup**: No Docker, no emulator, no connection strings
+2. **Fast iteration**: Tests run instantly without network latency
+3. **Simple debugging**: SQLite file can be inspected directly
+4. **Isolated tests**: Each test gets its own `test_bank.db`
+
+### Migration Path
+```bash
+# Local development (default)
+./dev.sh alice                           # Uses SQLite
+
+# Local with Cosmos emulator (optional)
+docker-compose up -d cosmos-emulator
+DB_MODE=cosmos ./dev.sh alice
+
+# Production
+azd up                                   # Deploys to Cosmos DB + Azure Functions
+```
+
+---
+
+## Mobile App (Expo 55)
+
+### Technology Stack
+- **Expo SDK 55** - Latest React Native framework
+- **React Native Paper 5** - Material Design 3 components
+- **React Native Gifted Chat** - Chat UI component
+- **noble-post-quantum** - ML-DSA-44 cryptography (JS/WASM)
+- **react-native-keychain** - Secure storage (Keychain/Keystore)
+
+### Quick Start
+
+```bash
+# Terminal 1: Backend
+./dev.sh alice
+
+# Terminal 2: Mobile app
+cd mobile
+npm install
+npm start
+# Press 'i' for iOS, 'a' for Android
+```
+
+### Environment Configuration
+
+The mobile app uses environment-based configuration:
+
+```typescript
+// mobile/src/config/env.ts
+const ENVIRONMENTS = {
+  development: { API_URL: 'http://localhost:8000' },
+  staging: { API_URL: 'https://42bank-staging.azurewebsites.net' },
+  production: { API_URL: 'https://42bank.azurewebsites.net' },
+};
+```
+
+For physical device testing, override in `mobile/app.json`:
+```json
+{
+  "expo": {
+    "extra": {
+      "apiUrl": "http://192.168.1.100:8000"
+    }
+  }
+}
+```
+
+### Key Management Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Mobile Device                                               │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ KeyManager (src/services/KeyManager.ts)             │   │
+│  │ • Uses @noble/post-quantum for ML-DSA-44            │   │
+│  │ • Key generation in JavaScript/WASM                 │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                          │                                  │
+│                          ▼                                  │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ Secure Storage (react-native-keychain)              │   │
+│  │ • iOS: Keychain + Secure Enclave                    │   │
+│  │ • Android: Keystore + TEE                           │   │
+│  │ • Private key encrypted, never leaves device        │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Mobile App Structure
+
+```
+mobile/
+├── app/
+│   ├── _layout.tsx              # Root layout (Paper + Auth)
+│   ├── (auth)/
+│   │   ├── _layout.tsx          # Auth stack
+│   │   ├── login.tsx            # Login screen
+│   │   └── register.tsx         # Registration with key generation
+│   ├── (tabs)/
+│   │   ├── _layout.tsx          # Tab navigation
+│   │   ├── index.tsx            # Chat screen (Gifted Chat)
+│   │   ├── accounts.tsx         # Account balances
+│   │   ├── transactions.tsx     # Transaction history
+│   │   └── settings.tsx         # Settings & logout
+│   └── +not-found.tsx           # 404
+├── src/
+│   ├── config/env.ts            # Environment configuration
+│   ├── services/
+│   │   ├── AuthService.ts       # Auth API client
+│   │   ├── KeyManager.ts        # ML-DSA-44 key management
+│   │   └── StorageService.ts    # Secure storage wrapper
+│   ├── contexts/AuthContext.tsx # Auth state provider
+│   ├── hooks/
+│   │   ├── useA2A.ts            # A2A client hook
+│   │   └── useBiometric.ts      # Biometric auth hook
+│   ├── utils/
+│   │   ├── theme.ts             # Paper theme config
+│   │   └── crypto.ts            # Crypto utilities
+│   └── types/index.ts           # TypeScript types
+├── assets/                      # App icons, splash, etc.
+├── package.json                 # Expo 55 dependencies
+├── app.json                     # Expo configuration
+├── eas.json                     # EAS build config
+└── tsconfig.json                # TypeScript config
+```
 
 ---
 
@@ -12,57 +161,127 @@ Guide for AI coding agents operating in this repository.
 
 ### Prerequisites
 - **uv** - Python package manager (required)
+- **Node.js 18+** - For mobile app development
 - **Foundry Local** - Local LLM runtime (required for integration tests)
 - Python 3.14+ (specified in `.python-version`)
 
-### Install Dependencies
+### Python Backend
+
 ```bash
+# Install dependencies
 uv sync
-```
 
-### Initialize Database
-```bash
+# Initialize database
 uv run python bootstrap.py
-```
 
-### Run Tests
-
-```bash
 # Run all tests (requires Foundry Local running)
 uv run pytest tests/ -v
 
-# Run single test file
+# Run specific tests
 uv run pytest tests/test_mcp_tools.py -v
+uv run pytest tests/ -m mcp          # MCP tool tests only
+uv run pytest tests/ -m a2a          # A2A agent tests only
 
-# Run single test
-uv run pytest tests/test_mcp_tools.py::test_check_balance_tool -v
-
-# Run tests by marker
-uv run pytest tests/ -m mcp      # MCP tool tests only (deterministic)
-uv run pytest tests/ -m a2a      # A2A agent tests only
-uv run pytest tests/ -m e2e      # E2E integration tests only
-uv run pytest tests/ -m "not slow" -v  # Skip slow tests
-
-# Run with coverage
-uv run pytest tests/ --cov=. --cov-report=html
-```
-
-### Type Checking
-```bash
-# Pyright is configured in pyrightconfig.json
-# Standard type checking mode
+# Type checking
 pyright
+
+# Start development servers
+./dev.sh alice                      # Quick start (SQLite)
+DB_MODE=cosmos ./dev.sh alice       # With Cosmos emulator
 ```
 
-### Start Development Servers
-```bash
-# Quick start (starts MCP + A2A servers)
-./dev.sh alice
+### Mobile App
 
-# Manual start
-uv run python mcp_server.py --http --user alice --port 8001  # MCP server
-uv run python a2a_server.py --user alice --port 8000        # A2A server
-uv run main.py --user alice                                  # CLI client
+```bash
+cd mobile
+
+# Install dependencies
+npm install
+
+# Run on iOS simulator
+npm run ios
+
+# Run on Android emulator
+npm run android
+
+# Start Metro bundler
+npm start
+
+# Type checking
+npm run typecheck
+
+# Build development client
+eas build --profile development --platform ios
+eas build --profile development --platform android
+```
+
+---
+
+## Azure Functions MCP Integration
+
+### Architecture
+
+42-Bank can deploy MCP tools as Azure Functions using the Azure Functions MCP Extension:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Azure Functions App                                         │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  MCP Tools (Function App)                                   │
+│  ├── check_balance()      → @app.mcp_tool()                │
+│  ├── send_money()         → @app.mcp_tool()                │
+│  ├── get_history()        → @app.mcp_tool()                │
+│  └── ...                                                    │
+│                                                             │
+│  Endpoint: /runtime/webhooks/mcp                           │
+│  Auth: System key or OAuth                                  │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Deployment
+
+```bash
+# Using Azure Developer CLI
+azd env new 42-bank-prod
+azd up
+
+# Or manual deployment
+az functionapp create --name 42bank-mcp --resource-group 42-bank \\
+  --runtime python --runtime-version 3.11 --functions-version 4
+```
+
+### MCP Tool Definition (Azure Functions)
+
+```python
+import azure.functions as func
+
+@app.mcp_tool()
+@app.mcp_tool_property(arg_name="account_type", description="Account type")
+def check_balance(account_type: str) -> str:
+    """Check account balance."""
+    balance = ledger.get_balance(token, account_type)
+    return f"Your {account_type} balance is ${balance:.2f}"
+```
+
+### host.json Configuration
+
+```json
+{
+  "version": "2.0",
+  "extensions": {
+    "mcp": {
+      "serverName": "42-Bank-MCP",
+      "serverVersion": "1.0.0",
+      "instructions": "Banking tools for 42-Bank AI agents"
+    }
+  },
+  "extensionBundle": {
+    "id": "Microsoft.Azure.Functions.ExtensionBundle.Preview",
+    "version": "[4.32.0, 5.0.0)"
+  }
+}
 ```
 
 ---
@@ -98,97 +317,27 @@ from agent_framework import Agent
 
 ### Type Hints
 - Use type hints for all function parameters and return types
-- Import types from `typing` module (Any, Dict, List, Optional, Protocol, etc.)
+- Import types from `typing` module
 - Use Pydantic models for data structures
 
-```python
-def get_balance(self, token: str, account_type: str = "checking") -> float:
-    ...
-
-def transfer(
-    self,
-    sender_token: str,
-    recipient_username: str,
-    amount: float,
-    description: str,
-    from_account: str = "checking",
-    to_account: str = "checking",
-    signature: Optional[str] = None,
-) -> bool:
-    ...
-```
-
 ### Naming Conventions
-- **Functions/Variables**: `snake_case` (e.g., `check_balance`, `get_token_by_username`)
-- **Classes**: `PascalCase` (e.g., `LedgerEngine`, `UserAccount`, `Transaction`)
-- **Constants**: `UPPER_SNAKE_CASE` (e.g., `TEST_DB`, `HISTORY_FILE`)
-- **Private methods**: Prefix with `_` (e.g., `_get_user`, `_save_user`, `_init_db`)
-- **Protocol classes**: Suffix with `Protocol` (e.g., `ChatClientProtocol`)
-
-### Pydantic Models
-Use Pydantic BaseModel for data structures:
-```python
-class Transaction(BaseModel):
-    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
-    sender: str
-    recipient: str
-    amount: float
-    description: str
-    account_type: str = "checking"
-
-
-class UserAccount(BaseModel):
-    token: str
-    username: str
-    public_key: Optional[str] = None
-    accounts: Dict[str, AccountData] = Field(default_factory=lambda: {...})
-```
-
-### Formatting
-- **Indentation**: 4 spaces
-- **Line length**: ~100 characters (flexible)
-- **Blank lines**: 2 blank lines between top-level functions/classes
-- **Docstrings**: Triple-quoted for modules and public functions
-
-### Docstrings
-```python
-def transfer(
-    self,
-    sender_token: str,
-    recipient_username: str,
-    amount: float,
-    description: str,
-) -> bool:
-    """
-    Transfer funds between users atomically.
-
-    Returns:
-        bool: True if transfer succeeded, False otherwise
-    """
-```
+- **Functions/Variables**: `snake_case`
+- **Classes**: `PascalCase`
+- **Constants**: `UPPER_SNAKE_CASE`
+- **Private methods**: Prefix with `_`
 
 ### Error Messages
-Use consistent prefixes for error messages:
+Use consistent prefixes:
 ```python
-# Service/initialization errors
 return "ERROR: Not initialized"
-return "ERROR: Service not initialized"
-
-# Business logic failures
 return f"FAILED: Insufficient funds. Balance: ${balance:.2f}"
-return f"FAILED: User '{to}' not found."
-return "FAILED: Amount must be positive."
 ```
 
 ---
 
 ## Testing Philosophy
 
-### Critical: AI Testing is Different
-
-This project tests **LLM-based agents**. Standard deterministic testing doesn't apply.
-
-### Three Test Categories
+### Test Categories
 
 | Type | File | Assertion Strategy | Pass Rate |
 |------|------|-------------------|-----------|
@@ -198,33 +347,18 @@ This project tests **LLM-based agents**. Standard deterministic testing doesn't 
 
 ### When Writing Tests
 
-**Deterministic (MCP Tools)** - Use exact assertions:
+**Deterministic (MCP Tools)**:
 ```python
 result = await mcp_tool.call_tool("check_balance")
 assert result == "Your checking account balance is $1000.00"
 ```
 
-**Non-deterministic (AI Agents)** - Use flexible assertions:
+**Non-deterministic (AI Agents)**:
 ```python
-# Extract numeric values (handles formatting variance)
 balance = extract_balance(text)
 assert balance == 1000.0
-
-# For transactions - accept LLM variance
-assert is_transaction_successful(text)  # True unless hard business error
+assert is_transaction_successful(text)
 ```
-
-### Helper Functions (in `tests/conftest.py`)
-
-- `extract_text(response_data)` - Strip tool call XML from responses
-- `extract_balance(text)` - Extract numeric balance (handles "$1000", "$1,000.00")
-- `is_transaction_successful(text)` - Returns True unless hard business failure
-
-### What NOT to Test
-
-- LLM parsing perfection (probabilistic, not deterministic)
-- Exact response wording ("transferred" vs "sent")
-- Parameter extraction success rate
 
 ---
 
@@ -232,411 +366,81 @@ assert is_transaction_successful(text)  # True unless hard business error
 
 ```
 42-bank/
-├── main.py              # CLI client (A2A HTTP client)
-├── a2a_server.py        # A2A server (5 agents, SSE streaming)
-├── mcp_server.py        # MCP server (9 banking tools)
-├── mcp_client.py        # MCPStreamableHTTPTool helper
-├── ledger.py            # Transaction ledger (SQLite + Pydantic)
-├── identity.py          # ML-DSA-44 post-quantum cryptography
-├── bootstrap.py         # Database initialization
-├── utils.py             # Shared utilities (Foundry discovery)
-├── audit_service.py     # Audit logging
-├── dev.sh               # Development startup script
+├── main.py                     # CLI client (deprecated, use mobile)
+├── a2a_server.py               # A2A server (5 agents, SSE streaming)
+├── mcp_server.py               # MCP server (9 banking tools)
+├── ledger.py                   # Transaction ledger (SQLite/Pydantic)
+├── identity.py                 # ML-DSA-44 cryptography
+├── bootstrap.py                # Database initialization
+├── dev.sh                      # Development startup script
 │
-├── bank_agents/         # Agent definitions
-│   ├── __init__.py
-│   ├── triage.py        # Routes queries to specialists
-│   ├── inquiry.py       # Balance, history queries
-│   ├── transaction.py   # Send/request money
-│   ├── advisor.py       # Products, account opening
-│   └── manager.py       # Escalations, oversight
+├── bank_agents/                # Agent definitions
+│   ├── triage.py               # Routes queries to specialists
+│   ├── inquiry.py              # Balance, history queries
+│   ├── transaction.py          # Send/request money
+│   ├── advisor.py              # Products, account opening
+│   └── manager.py              # Escalations, oversight
 │
-├── tests/               # Test suite
-│   ├── conftest.py      # Fixtures and helpers
-│   ├── test_mcp_tools.py    # Deterministic tool tests
-│   ├── test_a2a_agents.py   # Agent tests
-│   └── test_e2e_flow.py     # Integration tests
+├── api/                        # Mobile backend API
+│   ├── __init__.py             # FastAPI app with CORS
+│   ├── auth.py                 # User registration & JWT auth
+│   ├── keys.py                 # Key backup/restore
+│   └── notifications.py        # Push notifications
 │
-└── data/                # SQLite database
+├── mobile/                     # React Native / Expo app
+│   ├── app/                    # Screens
+│   ├── src/                    # Services, hooks, utils
+│   ├── assets/                 # Icons, splash, etc.
+│   └── package.json            # Expo 55 dependencies
+│
+├── tests/                      # Test suite
+│   ├── conftest.py             # Fixtures and helpers
+│   ├── test_mcp_tools.py       # Deterministic tool tests
+│   ├── test_a2a_agents.py      # Agent tests
+│   └── test_e2e_flow.py        # Integration tests
+│
+└── data/                       # SQLite database
     └── bank.db
 ```
-
----
-
-## Agent Development
-
-### Agent Pattern
-All agents follow this structure:
-```python
-from typing import Protocol, Any, Optional, Sequence
-from agent_framework import Agent
-
-class ChatClientProtocol(Protocol):
-    def as_agent(
-        self,
-        *,
-        name: Optional[str] = None,
-        instructions: Optional[str] = None,
-        tools: Optional[Sequence[Any]] = None,
-    ) -> Agent: ...
-
-def get_agent(client: ChatClientProtocol, tools) -> Agent:
-    instructions = (
-        "CRITICAL: You MUST respond ONLY in English.\n"
-        "You are AgentName. You handle [domain].\n"
-        "ALWAYS call the appropriate tool:\n"
-        "- [condition] → call [tool_name]()\n"
-    )
-    return client.as_agent(
-        name="AgentName",
-        instructions=instructions,
-        tools=tools,
-    )
-```
-
-### Agent Instructions Best Practices
-- Use UPPERCASE for critical directives ("CRITICAL:", "ALWAYS:", "NEVER:")
-- Specify tool mappings explicitly
-- Include response format requirements
-- Language constraints (English only)
-
----
-
-## MCP Tool Development
-
-### Tool Pattern
-```python
-from mcp.server.fastmcp import FastMCP
-
-mcp = FastMCP("42-bank-tools")
-
-@mcp.tool()
-def check_balance() -> str:
-    """View your checking account balance."""
-    if not _ledger or not _session_token:
-        return "ERROR: Not initialized"
-    balance = _ledger.get_balance(_session_token, "checking")
-    return f"Your checking account balance is ${balance:.2f}"
-```
-
-### Tool Guidelines
-- All tools must have docstrings (used by LLM for tool selection)
-- Return strings for human-readable output
-- Return structured data (lists, dicts) for programmatic use
-- Validate inputs at the start of the function
-- Check initialization state before operations
-
----
-
-## Error Handling
-
-### In MCP Tools
-```python
-# Check initialization
-if not _ledger or not _session_token:
-    return "ERROR: Not initialized"
-
-# Validate inputs
-if amount <= 0:
-    return "FAILED: Amount must be positive."
-if not recipient_username:
-    return "FAILED: Recipient username required."
-
-# Check business constraints
-if balance < amount:
-    return f"FAILED: Insufficient funds. Balance: ${balance:.2f}"
-```
-
-### In Ledger Methods
-```python
-def transfer(...) -> bool:
-    # Validate inputs
-    if amount <= 0:
-        return False
-    if not recipient_username:
-        return False
-
-    # Check business rules
-    if s_user.accounts[from_account].balance < amount:
-        return False
-
-    # Execute atomically
-    with sqlite3.connect(self.db_path) as conn:
-        self._save_user(s_user, conn)
-        self._save_user(r_user, conn)
-    return True
-```
-
----
-
-## Configuration Files
-
-- `pyproject.toml` - Project dependencies, pytest config, uv settings
-- `pyrightconfig.json` - Type checking configuration (standard mode)
-- `.python-version` - Python version (3.14)
-- `host.json` / `host.a2a.json` - Azure Functions configuration
 
 ---
 
 ## Common Tasks
 
 ### Add New MCP Tool
-1. Add `@mcp.tool()` decorated function in `mcp_server.py`
-2. Include docstring (used by LLM for tool discovery)
-3. Validate inputs and return appropriate error messages
-4. Test with: `uv run pytest tests/test_mcp_tools.py -v`
+1. Add `@mcp.tool()` function in `mcp_server.py`
+2. Include docstring for tool discovery
+3. Test: `uv run pytest tests/test_mcp_tools.py -v`
 
-### Add New Agent
-1. Create file in `bank_agents/` following existing patterns
-2. Import and register in `a2a_server.py`
-3. Add routing rules to `triage.py` if needed
-4. Test with: `uv run pytest tests/test_a2a_agents.py -v`
+### Add New Mobile Screen
+1. Create file in `mobile/app/(tabs)/` or `mobile/app/(auth)/`
+2. Update layout file if needed
+3. Test: `cd mobile && npm start`
 
 ### Database Changes
 1. Modify schema in `ledger.py` `_init_db()` method
-2. Update Pydantic models as needed
+2. Update Pydantic models
 3. Run `uv run python bootstrap.py` to reinitialize
 
 ---
 
-## Azure Deployment
-
-### Architecture
-
-42-Bank supports dual deployment:
-- **Local**: SQLite + Foundry Local (default)
-- **Azure**: Cosmos DB + Azure AI Foundry
-
-### Database Abstraction
-
-The `cosmos_mcp_client.py` module provides Cosmos DB integration:
-
-```python
-from cosmos_mcp_client import CosmosMCPClient
-
-# Auto-selects based on environment
-# Cosmos if COSMOS_MCP_URL is set, SQLite otherwise
-```
-
-### Local Development with Cosmos DB Emulator
-
-```bash
-# Start emulator (Docker required)
-docker-compose up -d cosmos-emulator
-
-# Initialize database
-uv run python scripts/init-cosmos-local.py
-
-# Run with Cosmos
-DB_MODE=cosmos ./dev.sh alice
-```
-
-### Azure Deployment Commands
-
-```bash
-# Deploy infrastructure
-az deployment sub create \
-  --location eastus \
-  --template-file infra/main.bicep
-
-# Deploy Cosmos DB MCP Toolkit (Microsoft)
-git clone https://github.com/AzureCosmosDB/MCPToolKit.git
-cd MCPToolKit && azd up
-
-# Deploy Banking MCP Server
-docker build -f Dockerfile.banking-mcp -t 42bank-banking-mcp .
-az containerapp create --name 42bank-banking-mcp --image 42bank-banking-mcp
-```
-
-### Environment Variables
+## Environment Variables
 
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `DB_MODE` | Database mode | `sqlite` or `cosmos` |
-| `AZURE_COSMOS_CONNECTION_STRING` | Cosmos DB connection | `AccountEndpoint=...;AccountKey=...` |
-| `COSMOS_MCP_URL` | MCP Toolkit URL | `https://cosmos-mcp.azurecontainerapps.io/mcp` |
-| `COSMOS_DATABASE` | Database name | `banking` |
+| `AZURE_COSMOS_CONNECTION_STRING` | Cosmos DB connection | `AccountEndpoint=...` |
 | `AZURE_AI_PROJECT_ENDPOINT` | Foundry project | `https://42-bank.cognitiveservices.azure.com/` |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Model deployment | `Qwen/Qwen3.5-35B-A3B` |
-
-### Model Selection
-
-- **Qwen3.5-35B-A3B** (recommended): Cheapest MoE, 3B active params
-- **Qwen3.5-27B**: Best instruction-following (95.0 IFEval)
-- **GPT-4o-mini**: OpenAI ecosystem
-
-### Files Created
-
-| File | Purpose |
-|------|---------|
-| `docker-compose.yml` | Local Cosmos emulator setup |
-| `scripts/init-cosmos-local.py` | Database initialization |
-| `cosmos_mcp_client.py` | Cosmos DB MCP client |
-| `mcp_banking_server.py` | Banking MCP wrapper |
-| `Dockerfile.banking-mcp` | Container build |
-| `infra/main.bicep` | Azure infrastructure |
-| `AZURE_DEPLOYMENT.md` | Deployment guide |
-
----
-
-## Docker Commands
-
-### Cosmos DB Emulator
-
-```bash
-# Start
-docker-compose up -d cosmos-emulator
-
-# Check status
-docker-compose ps
-
-# View logs
-docker-compose logs -f cosmos-emulator
-
-# Stop
-docker-compose down
-
-# Reset data
-docker-compose down -v
-```
-
-### Health Checks
-
-```bash
-# Cosmos emulator
-curl -sk https://localhost:8081/_explorer/index.html
-
-# Data explorer (browser)
-open https://localhost:1234/_explorer/index.html
-
-# Banking MCP server
-curl http://localhost:8002/health
-```
-
----
-
-## Testing with Cosmos DB
-
-### Integration Tests
-
-```bash
-# Run tests with Cosmos emulator
-DB_MODE=cosmos uv run pytest tests/ -v
-
-# Specific Cosmos tests
-uv run pytest tests/ -m cosmos
-```
-
-### Seed Data
-
-```bash
-# Initialize test data
-uv run python scripts/init-cosmos-local.py
-
-# Verify
-curl -sk https://localhost:8081/_explorer/index.html
-```
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Model deployment | `Qwen3.5-35B-A3B` |
+| `JWT_SECRET` | JWT signing key | (generate with secrets.token_urlsafe) |
 
 ---
 
 ## Notes
 
 - **Foundry Local must be running** for integration tests
+- **Mobile app** is the primary client (CLI deprecated)
 - Tests use ports 8100 (A2A) and 8101 (MCP) to avoid conflicts
 - Test database: `data/test_bank.db` (auto-cleaned)
 - Production database: `data/bank.db`
-- **Cosmos emulator** requires Docker and ~2GB RAM
-- **Local development** defaults to SQLite (no Docker required)
-- **Mobile app** is the primary client (CLI deprecated)
-
----
-
-## Mobile Development
-
-### Architecture
-
-42-Bank is **mobile-first** with native AI integration:
-
-- **iOS**: Apple Intelligence (iOS 18+) / Core ML
-- **Android**: Gemini Nano (Pixel 8+) / ML Kit
-- **React Native / Expo**: Cross-platform framework
-
-### Mobile Backend API
-
-New REST endpoints for mobile app (in `api/`):
-
-| Endpoint | Purpose |
-|----------|---------|
-| `POST /api/auth/register` | User registration with device-generated public key |
-| `POST /api/auth/login` | JWT authentication |
-| `POST /api/keys/backup` | Backup encrypted private key |
-| `POST /api/notifications/register` | Register push notification token |
-
-### Quick Start
-
-```bash
-# Terminal 1: Backend
-./dev.sh alice
-
-# Terminal 2: Mobile app
-cd mobile
-npm install
-npx expo start --dev-client
-```
-
-### Files Created
-
-| File | Purpose |
-|------|---------|
-| `api/__init__.py` | FastAPI app with CORS |
-| `api/auth.py` | User registration & JWT auth |
-| `api/keys.py` | Key backup/restore |
-| `api/notifications.py` | Push notifications |
-| `mobile/src/services/A2AClient.ts` | A2A client for mobile |
-| `mobile/package.json` | Expo dependencies |
-
-### Mobile Environment Variables
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `JWT_SECRET` | JWT signing key | (generate with secrets.token_urlsafe) |
-| `JWT_EXPIRY_HOURS` | Token expiry | `168` (7 days) |
-| `INTERNAL_API_KEY` | Internal service auth | (for notification service) |
-| `AZURE_NOTIFICATION_HUB_NAME` | Notification hub | `42bank-notifications` |
-
-### Development Without App Store
-
-See [MOBILE_DEVELOPMENT.md](MOBILE_DEVELOPMENT.md) for complete guide.
-
-**Options:**
-1. **Expo Go** - Scan QR code (limited native features)
-2. **Expo Dev Client** - Full features, one-time build
-3. **Physical Device** - USB install
-
-### Key Management (Mobile)
-
-Keys are generated and stored on device:
-- **Private key**: Never leaves secure enclave
-- **Public key**: Sent to server for verification
-- **Backup**: Encrypted with recovery key, stored in cloud
-
-### Authentication Flow
-
-```
-Mobile App
-    │
-    ├─> 1. Generate ML-DSA-44 keypair
-    │       Private key → Secure Enclave
-    │
-    ├─> 2. Register user
-    │       POST /api/auth/register
-    │       {username, public_key, device_id}
-    │
-    ├─> 3. Login
-    │       Biometric auth
-    │       POST /api/auth/login
-    │       Return JWT token
-    │
-    └─> 4. A2A communication
-            Headers: Authorization: Bearer JWT
-```
+- **SQLite for dev, Cosmos DB for production**

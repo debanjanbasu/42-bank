@@ -1,0 +1,7 @@
+<svg width="1024" height="1024" xmlns="http://www.w3.org/2000/svg">
+    <rect fill="#1a1a2e" width="1024" height="1024" rx="0"/>
+    <text x="512" y="460.8" font-size="409.6" fill="#00d9ff" 
+          text-anchor="middle" font-family="Arial, sans-serif" font-weight="bold">42</text>
+    <text x="512" y="614.4" font-size="102.4" fill="#00d9ff" 
+          text-anchor="middle" font-family="Arial, sans-serif">BANK</text>
+  </svg>

@@ -96,6 +96,19 @@ dmypy.json
 .pyre/
 
 # ============================================
+# Node.js / Mobile App
+# ============================================
+node_modules/
+.expo/
+expo-env.d.ts
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+
+# ============================================
 # Project Specific
 # ============================================
 # Session state (personal workspace)
