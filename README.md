@@ -1,91 +1,169 @@
 # 42 Bank: Multi-Agent Banking System
 
-A **quantum-safe multi-agent banking platform** built with Microsoft Agent Framework, featuring MCP (Model Context Protocol) and A2A (Agent-to-Agent) protocols.
+A **quantum-safe multi-agent banking platform** with mobile-first design, featuring on-device AI integration (Apple Intelligence / Gemini Nano), A2A protocol agents, and ML-DSA-44 post-quantum cryptography.
 
 ## ✨ Features
 
+### Core Platform
 - 🤖 **5 Specialized Agents** - Triage, Inquiry, Transaction, Advisor, Manager
-- 🔌 **MCP Protocol** - 9 banking tools via Model Context Protocol Streamable HTTP
-- 🔗 **A2A Protocol** - Agent routing via HTTP streaming (Server-Sent Events)
-- 🔒 **Post-Quantum Security** - ML-DSA-44 (Dilithium) transaction signatures  
-- ☁️ **Azure Ready** - Deploy with Azure Functions + AI Agent Service
-- 🏠 **Local Development** - Same architecture locally and in production
+- 🔌 **MCP Protocol** - 9 banking tools via Model Context Protocol
+- 🔗 **A2A Protocol** - Agent-to-Agent communication with streaming
+- 🔒 **Post-Quantum Security** - ML-DSA-44 (Dilithium) signatures
+
+### Mobile App (New)
+- 📱 **Cross-Platform** - React Native / Flutter with Expo
+- 🧠 **On-Device AI** - Apple Intelligence (iOS) / Gemini Nano (Android)
+- 🔐 **Secure Enclave** - Keys stored in Keychain / Keystore
+- 👆 **Biometric Auth** - Face ID / Touch ID / Fingerprint
+- 🔔 **Push Notifications** - Real-time transaction alerts
+
+### Cloud Backend
+- ☁️ **Azure AI Foundry** - Qwen3.5-35B-A3B (MoE model)
+- 💾 **Cosmos DB** - Serverless global database
+- 🔑 **Key Vault** - Secure secrets management
+- 📊 **Application Insights** - Full observability
 
 ---
 
 ## 🚀 Quick Start
 
-### Prerequisites
-- [uv](https://github.com/astral-sh/uv) - Python package manager
-- [Foundry Local](https://learn.microsoft.com/azure/ai-foundry/foundry-local/get-started) - Local LLM runtime
-- [Docker Desktop](https://www.docker.com/products/docker-desktop) - Optional, for Cosmos DB emulator
+### Mobile App Development (Recommended)
 
-### Three Terminals
-
-**Terminal 1: Start LLM** (one time, keep running)
 ```bash
-foundry model run qwen2.5-14b-instruct-generic-gpu:4
-# Loads ~7-14GB into GPU, auto-discovers port
-```
-
-**Terminal 2: Start Servers**
-```bash
-# SQLite (default - no Docker required)
+# Terminal 1: Start backend
 ./dev.sh alice
 
-# OR Cosmos DB emulator (Docker required)
-docker-compose up -d cosmos-emulator
-DB_MODE=cosmos ./dev.sh alice
+# Terminal 2: Start mobile app
+cd mobile
+npm install
+npx expo start --dev-client
+
+# Scan QR code with Expo Go or run on device
 ```
 
-**Terminal 3: Chat**
+### CLI Client (Legacy - For Quick Testing)
+
 ```bash
+# Terminal 1: Start LLM
+foundry model run qwen2.5-14b-instruct-generic-gpu:4
+
+# Terminal 2: Start backend
+./dev.sh alice
+
+# Terminal 3: CLI client
 uv run main.py --user alice
 ```
-
-**Try:**
-- "What's my balance?"
-- "Send $50 to bob for dinner"
-- "Show my transactions"
-- "What banking products do you offer?"
 
 ---
 
 ## 🏗️ Architecture
 
-### Request Flow
+### Complete System Architecture
+
 ```
-User Query
-   ↓
-CLI (main.py) - HTTP POST with streaming
-   ↓
-A2A Server :8000 → Triage Agent
-   ↓ HTTP POST /a2a/{agent}/v1/message (or :stream)
-Specialist Agents (Inquiry/Transaction/Advisor/Manager)
-   ↓ MCPStreamableHTTPTool
-MCP Server :8001/mcp → 9 Banking Tools
-   ↓
-SQLite Database + ML-DSA-44 Signatures
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Mobile App (Expo)                                                        │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐            │
+│  │ Apple Intel.   │  │ Gemini Nano    │  │ Biometric Auth │            │
+│  │ (iOS 18+)      │  │ (Android)      │  │ (Face ID/Touch)│            │
+│  └────────┬───────┘  └────────┬───────┘  └────────────────┘            │
+│           │                   │                                          │
+│  ┌────────▼───────────────────▼────────────────────────────┐            │
+│  │ A2A Client (TypeScript)                                 │            │
+│  │ • HTTP/SSE communication                                │            │
+│  │ • JWT authentication                                    │            │
+│  │ • Transaction signing                                   │            │
+│  └────────┬────────────────────────────────────────────────┘            │
+│           │                                                               │
+│  ┌────────▼────────────────────────────────────────────────┐            │
+│  │ Secure Storage                                          │            │
+│  │ • iOS: Keychain (Secure Enclave)                        │            │
+│  │ • Android: Keystore (TEE)                               │            │
+│  │ • ML-DSA-44 private keys                                │            │
+│  └─────────────────────────────────────────────────────────┘            │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
+                              │
+                              │ A2A Protocol (HTTPS/SSE)
+                              ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Azure Backend (42-Bank)                                                  │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌────────────────────────────────────────────────────────────────────┐  │
+│  │ REST API (FastAPI)                                                 │  │
+│  │ • POST /api/auth/register - User registration                      │  │
+│  │ • POST /api/auth/login - JWT authentication                        │  │
+│  │ • POST /api/keys/backup - Key backup                               │  │
+│  │ • POST /api/notifications/register - Push tokens                   │  │
+│  └────────────────────────────────────────────────────────────────────┘  │
+│                                                                          │
+│  ┌────────────────────────────────────────────────────────────────────┐  │
+│  │ A2A Server (Port 8000)                                             │  │
+│  │ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐       │  │
+│  │ │ Triage  │ │ Inquiry │ │Transaction│ │ Advisor │ │ Manager │       │  │
+│  │ │ Agent   │ │ Agent   │ │ Agent    │ │ Agent   │ │ Agent   │       │  │
+│  │ └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘       │  │
+│  │      │           │           │           │           │              │  │
+│  │      └───────────┴───────────┴───────────┴───────────┘              │  │
+│  │                              │                                       │  │
+│  │                   Qwen3.5-35B-A3B (3B active params)                │  │
+│  └──────────────────────────────┼──────────────────────────────────────┘  │
+│                                 │                                          │
+│  ┌──────────────────────────────▼──────────────────────────────────────┐  │
+│  │ MCP Server (Port 8001)                                             │  │
+│  │ • check_balance • send_money • view_history                        │  │
+│  │ • request_payment • approve_request • list_products                │  │
+│  └─────────────────────────────────────────────────────────────────────┘  │
+│                                                                          │
+│  ┌────────────────────────────────────────────────────────────────────┐  │
+│  │ Azure Services                                                     │  │
+│  │ • Cosmos DB (Serverless) - Users, transactions                    │  │
+│  │ • Key Vault - Secrets, encryption keys                            │  │
+│  │ • Notification Hubs - Push notifications                          │  │
+│  │ • Application Insights - Monitoring                               │  │
+│  └────────────────────────────────────────────────────────────────────┘  │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Components
+### Request Flow (Mobile)
 
-**5 Agents** (in `bank_agents/`)
-- **Triage** - Routes queries to specialists via A2A HTTP
-- **Inquiry** - Balance, history, account list
-- **Transaction** - Send/request money, approvals
-- **Advisor** - Products, account opening
-- **Manager** - Escalations, oversight
-
-**9 MCP Tools** (in `mcp_server.py`)
-- `check_balance()`, `view_history()`, `list_my_accounts()`
-- `send_money()`, `request_payment()`, `approve_request()`, `get_pending_requests()`
-- `list_products()`, `open_account()`
-
-**Protocols**
-- **MCP Streamable HTTP** - Tools at `/mcp` endpoint (JSON-RPC 2.0)
-- **A2A Streaming** - Agent routing via HTTP with Server-Sent Events (SSE)
-- **ML-DSA-44** - Post-quantum signatures (FIPS 204)
+```
+User: "What's my balance?"
+        ↓
+┌──────────────────────────────────────┐
+│ Mobile On-Device AI                  │
+│ • Classify intent → "inquiry"        │
+│ • Decide: local or cloud?            │
+└───────────────┬──────────────────────┘
+                │
+                │ Needs fresh data → Route to cloud
+                ▼
+┌──────────────────────────────────────┐
+│ A2A Request                          │
+│ POST /a2a/triage/v1/message          │
+│ Headers: Authorization: Bearer JWT   │
+└───────────────┬──────────────────────┘
+                │
+                ▼
+┌──────────────────────────────────────┐
+│ Azure A2A Server                     │
+│ • Validate JWT                       │
+│ • Triage routes to Inquiry Agent     │
+│ • Agent calls check_balance()        │
+└───────────────┬──────────────────────┘
+                │
+                ▼
+┌──────────────────────────────────────┐
+│ Response                             │
+│ "Your checking balance is $1,000.00" │
+│ • SSE stream to mobile               │
+│ • Push notification on completion    │
+└──────────────────────────────────────┘
+```
 
 ---
 
@@ -93,302 +171,285 @@ SQLite Database + ML-DSA-44 Signatures
 
 ```
 42-bank/
-├── main.py                 # CLI (A2A HTTP client)
-├── a2a_server.py           # A2A server (5 agents)
-├── mcp_server.py           # MCP server (9 tools)
-├── mcp_banking_server.py   # Banking MCP wrapper (NEW)
-├── cosmos_mcp_client.py    # Cosmos DB client (NEW)
-├── mcp_client.py           # MCPStreamableHTTPTool helper
-├── dev.sh                  # Local development startup
-├── utils.py                # Shared utilities
-├── ledger.py               # Transaction ledger (SQLite)
-├── identity.py             # ML-DSA-44 cryptography
-├── bootstrap.py            # Database initialization
-├── audit_service.py        # Audit logging
-├── docker-compose.yml      # Local Cosmos emulator (NEW)
-├── Dockerfile.banking-mcp  # Container build (NEW)
+├── api/                          # Mobile REST API (NEW)
+│   ├── __init__.py               # FastAPI app
+│   ├── auth.py                   # User registration & JWT
+│   ├── keys.py                   # Key backup/restore
+│   └── notifications.py          # Push notifications
 │
-├── bank_agents/            # Agent definitions
+├── mobile/                       # Mobile App (NEW)
+│   ├── app/                      # Expo Router screens
+│   ├── src/
+│   │   ├── services/
+│   │   │   ├── A2AClient.ts      # A2A protocol client
+│   │   │   ├── KeyManager.ts     # ML-DSA-44 crypto
+│   │   │   ├── Notifications.ts  # Push notifications
+│   │   │   └── SecureStorage.ts  # Keychain/Keystore
+│   │   └── native/
+│   │       ├── ios/AppleIntelligenceBridge.swift
+│   │       └── android/GeminiNanoBridge.kt
+│   ├── app.json
+│   ├── package.json
+│   └── README.md
+│
+├── bank_agents/                  # A2A agents
 │   ├── triage.py
 │   ├── inquiry.py
 │   ├── transaction.py
 │   ├── advisor.py
 │   └── manager.py
 │
-├── scripts/                # Utility scripts (NEW)
-│   └── init-cosmos-local.py
-│
-├── infra/                  # Azure infrastructure (NEW)
+├── infra/                        # Azure infrastructure
 │   └── main.bicep
 │
-├── data/                   # SQLite database
-│   └── bank.db
+├── scripts/                      # Utility scripts
+│   └── init-cosmos-local.py
 │
-├── tests/                  # Test suite
+├── a2a_server.py                 # A2A server (5 agents)
+├── mcp_server.py                 # MCP server (9 tools)
+├── mcp_banking_server.py         # Banking MCP wrapper
+├── cosmos_mcp_client.py          # Cosmos DB client
+├── ledger.py                     # Transaction ledger
+├── identity.py                   # ML-DSA-44 crypto
 │
-├── AZURE_DEPLOYMENT.md     # Azure guide (NEW)
-└── README.md               # This file
+├── docker-compose.yml            # Cosmos DB emulator
+├── Dockerfile.banking-mcp        # Container build
+│
+├── AZURE_DEPLOYMENT.md           # Azure deployment guide
+├── MOBILE_DEVELOPMENT.md         # Mobile dev guide (NEW)
+├── AGENTS.md                     # AI agent instructions
+└── README.md                     # This file
 ```
-
-**Lines of Code:** ~2,500 total
-- Core: 12 Python files
-- Agents: 5 specialized agents
-- Infrastructure: Bicep + Docker
-- Clean, focused codebase
 
 ---
 
-## 💻 Development
+## 📱 Mobile App
 
-### Setup
+### Development Without App Store
+
+See [MOBILE_DEVELOPMENT.md](MOBILE_DEVELOPMENT.md) for complete guide.
+
+**Quick setup:**
 ```bash
-# Install dependencies
-uv sync
+cd mobile
+npm install
 
-# Initialize database (alice: $1000, bob: $500)
-uv run python bootstrap.py
+# Option 1: Expo Go (limited features)
+npx expo start
+
+# Option 2: Dev Client (full features - recommended)
+npx expo run:ios
+npx expo run:android
 ```
 
-### Manual Server Startup
-```bash
-# Option 1: Use dev.sh (recommended)
-./dev.sh alice
+### Key Features
 
-# Option 2: Start individually
-# Terminal 1: MCP server
-uv run python mcp_server.py --http --user alice --port 8001
-
-# Terminal 2: A2A server
-uv run python a2a_server.py --user alice --port 8000
-
-# Terminal 3: CLI
-uv run main.py --user alice
-```
-
-### Testing Components
-
-**MCP Server**
-```bash
-# List tools
-curl -X POST http://localhost:8001/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
-```
-
-**A2A Agents**
-```bash
-# Inquiry agent
-curl -X POST http://localhost:8000/a2a/inquiry/v1/message \
-  -H "Content-Type: application/json" \
-  -d '{"message":{"parts":[{"kind":"text","text":"balance?"}]}}'
-
-# Transaction agent
-curl -X POST http://localhost:8000/a2a/transaction/v1/message \
-  -H "Content-Type: application/json" \
-  -d '{"message":{"parts":[{"kind":"text","text":"send $20 to bob"}]}}'
-```
-
-**Health Check**
-```bash
-curl http://localhost:8000/health
-# Returns: {"status":"healthy","protocol":"A2A",...}
-```
-
-### Database
-
-**Reset**
-```bash
-rm data/bank.db
-uv run python bootstrap.py
-```
-
-**Inspect**
-```bash
-sqlite3 data/bank.db
-.tables
-SELECT username, json_extract(data, '$.accounts.checking.balance') FROM users;
-.quit
-```
+| Feature | iOS | Android |
+|---------|-----|---------|
+| On-Device AI | Apple Intelligence (iOS 18+) | Gemini Nano (Pixel 8+) |
+| Biometric Auth | Face ID / Touch ID | Fingerprint |
+| Secure Storage | Keychain + Secure Enclave | Keystore + TEE |
+| Push Notifications | APNs via Expo | FCM via Expo |
+| A2A Streaming | ✅ SSE | ✅ SSE |
 
 ---
 
 ## ☁️ Azure Deployment
 
-### Architecture
-```
-Client → Azure AI Agent Service (managed agents)
-           ↓ MCP Streamable HTTP
-         Azure Functions (serverless tools)
-           ↓
-         Azure SQL / Cosmos DB
-```
+### Quick Deploy
 
-### Deploy MCP Tools (Azure Functions)
-
-**1. Create Resources**
 ```bash
-az group create --name 42bank-rg --location eastus
+# 1. Deploy Cosmos DB MCP Toolkit
+git clone https://github.com/AzureCosmosDB/MCPToolKit.git
+cd MCPToolKit && azd up
 
-az storage account create \
-  --name 42bankstorage \
-  --resource-group 42bank-rg \
-  --sku Standard_LRS
+# 2. Deploy 42-Bank infrastructure
+cd ../42-bank
+az deployment sub create --location eastus --template-file infra/main.bicep
 
-az functionapp create \
-  --name 42bank-mcp \
-  --resource-group 42bank-rg \
-  --storage-account 42bankstorage \
-  --consumption-plan-location eastus \
-  --runtime python \
-  --runtime-version 3.11 \
-  --functions-version 4
+# 3. Deploy backend
+az containerapp create --name 42bank-backend ...
+
+# 4. Initialize database
+uv run python scripts/init-cosmos-local.py
 ```
 
-**2. Deploy**
-```bash
-# See: https://learn.microsoft.com/azure/azure-functions/functions-bindings-mcp
-# Reference implementation available in legacy/ folder
-func azure functionapp publish 42bank-mcp
-```
+See [AZURE_DEPLOYMENT.md](AZURE_DEPLOYMENT.md) for complete guide.
 
-### Deploy Agents (Azure AI Agent Service)
+### Cost Estimate
 
-**1. Setup**
-```bash
-az ai project create \
-  --name 42bank-agents \
-  --resource-group 42bank-rg \
-  --location eastus
-```
-
-**2. Configure**
-```bash
-export AZURE_AI_PROJECT_ENDPOINT="https://YOUR_PROJECT.eastus.inference.azure.com"
-export AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4"
-export MCP_SERVER_URL="https://42bank-mcp.azurewebsites.net/mcp"
-```
-
-**3. Deploy**
-```bash
-# See: Azure AI Agent Service documentation
-# Agents automatically connect to MCP tools via MCPStreamableHTTPTool
-```
-
-### Costs (Estimated)
-- Azure Functions: ~$5-20/month (consumption tier)
-- Azure AI Agent Service: ~$10-50/month (pay per call)
-- Storage: ~$1-5/month
-- **Total: ~$16-75/month** (scales with usage)
+| Component | Monthly Cost |
+|-----------|--------------|
+| Cosmos DB Serverless | $5-15 |
+| Container Apps | $10-30 |
+| Qwen3.5-35B-A3B | $5-20 |
+| Notification Hubs | $0-5 |
+| **Total** | **$20-70/month** |
 
 ---
 
-## 🔒 Security
+## 🔐 Security
 
-### Post-Quantum Cryptography
+### ML-DSA-44 Post-Quantum Cryptography
+
 All transactions signed with **ML-DSA-44** (FIPS 204):
 - Quantum-resistant lattice-based signatures
 - Security Level 2 (~128-bit equivalent)
 - Signature size: ~2.4KB
 - Public key: ~1.3KB
 
-```python
-from identity import IdentityManager
+### Mobile Key Storage
 
-ident = IdentityManager()
-token = ident.create_identity("alice")
-pub_key = ident.get_public_key("alice")
-# Signatures auto-verified by ledger.py
+| Platform | Storage | Hardware Backing |
+|----------|---------|------------------|
+| iOS | Keychain | Secure Enclave |
+| Android | Keystore | TEE (Trusted Execution Environment) |
+
+### Authentication Flow
+
 ```
-
-### Authentication
-- **Local**: Unauthenticated (dev mode)
-- **Production**: API key or Microsoft Entra ID
-- Configure via `--require-auth` flag
+┌─────────────┐
+│ Mobile App  │  1. Generate ML-DSA-44 keypair on device
+│             │     Private key → Secure Enclave
+│             │     Public key → Server
+└─────────────┘
+       │
+       │ 2. Register user
+       ▼
+┌─────────────┐
+│ API Server  │  3. Create user account
+│             │     Store public key
+│             │     Return JWT token
+└─────────────┘
+       │
+       │ 4. Login
+       ▼
+┌─────────────┐
+│ Device Auth │  5. Biometric verification
+│             │     Sign challenge with private key
+│             │     Server verifies signature
+└─────────────┘
+```
 
 ---
 
-## 🐛 Troubleshooting
+## 💻 Development
 
-### Foundry Not Running
+### Prerequisites
+
+- **Python 3.10+** with uv package manager
+- **Node.js 18+** for mobile app
+- **Docker Desktop** (optional, for Cosmos DB emulator)
+- **Foundry Local** (for local LLM)
+- **Expo CLI** (for mobile app)
+
+### Backend Development
+
 ```bash
-# Check status
-foundry service status
+# Install dependencies
+uv sync
 
-# Start
-foundry model run qwen2.5-14b-instruct-generic-gpu:4
-
-# Port auto-discovery (dev.sh handles this)
-export FOUNDRY_LOCAL_ENDPOINT="http://127.0.0.1:<PORT>/v1"  # Get actual port from: foundry service status
-```
-
-### MCP Server Issues
-```bash
-# Verify running
-lsof -i :8001
-
-# Check logs
-tail -f /tmp/42bank-mcp.log
-
-# Test endpoint
-curl -X POST http://localhost:8001/mcp \
-  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
-```
-
-### A2A Server Issues
-```bash
-# Verify running
-lsof -i :8000
-
-# Check logs
-tail -f /tmp/42bank-a2a.log
-
-# Health check
-curl http://localhost:8000/health
-```
-
-### Database Locked
-```bash
-# Restart servers (dev.sh handles cleanup)
+# Start with SQLite (default)
 ./dev.sh alice
+
+# Start with Cosmos DB emulator
+docker-compose up -d cosmos-emulator
+DB_MODE=cosmos ./dev.sh alice
+
+# Run tests
+uv run pytest tests/ -v
+```
+
+### Mobile Development
+
+```bash
+cd mobile
+
+# Install dependencies
+npm install
+
+# Start development
+npx expo start --dev-client
+
+# Build for device
+npx expo run:ios
+npx expo run:android
+```
+
+---
+
+## 📚 Documentation
+
+| Document | Purpose |
+|----------|---------|
+| [AZURE_DEPLOYMENT.md](AZURE_DEPLOYMENT.md) | Azure deployment guide |
+| [MOBILE_DEVELOPMENT.md](MOBILE_DEVELOPMENT.md) | Mobile app development |
+| [AGENTS.md](AGENTS.md) | AI agent instructions |
+| [TESTING.md](TESTING.md) | Testing guide |
+
+---
+
+## 🧪 Testing
+
+### Backend Tests
+
+```bash
+# All tests (requires Foundry Local)
+uv run pytest tests/ -v
+
+# Specific test
+uv run pytest tests/test_mcp_tools.py::test_check_balance_tool -v
+
+# With coverage
+uv run pytest tests/ --cov=. --cov-report=html
+```
+
+### Mobile Tests
+
+```bash
+cd mobile
+
+# Unit tests
+npm test
+
+# E2E tests
+npm run test:e2e
 ```
 
 ---
 
 ## 🛠️ Technology Stack
 
-**Frameworks**
-- [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) - Multi-agent orchestration
-- [FastMCP](https://github.com/jlowin/fastmcp) - MCP server
-- [Starlette](https://www.starlette.io/) - A2A server (ASGI)
+### Backend
+- **Python 3.10+** - FastAPI, Pydantic, Azure SDK
+- **Agent Framework** - Microsoft Agent Framework
+- **Database** - Cosmos DB (Serverless) / SQLite (local)
+- **AI Model** - Qwen3.5-35B-A3B (Azure AI Foundry)
 
-**Azure**
-- Azure AI Foundry - Model deployment
-- Azure Functions - Serverless MCP
-- Azure AI Agent Service - Managed agents
+### Mobile
+- **React Native / Expo** - Cross-platform framework
+- **TypeScript** - Type-safe development
+- **Expo Router** - File-based navigation
+- **Native Modules** - Swift (iOS) / Kotlin (Android)
 
-**Local Dev**
-- Foundry Local - GPU inference
-- SQLite - Transaction ledger
-- Qwen 2.5 14B - Open LLM
+### Protocols
+- **MCP** - Model Context Protocol (tools)
+- **A2A** - Agent-to-Agent (agent communication)
+- **JWT** - JSON Web Tokens (auth)
+- **ML-DSA-44** - Post-quantum signatures
 
-**Protocols**
-- MCP (Model Context Protocol) - Tool standard
-- A2A (Agent-to-Agent) - Agent communication
-- JSON-RPC 2.0 - Message format
-
-**Security**
-- ML-DSA-44 (pqcrypto) - Post-quantum signatures
+### Azure Services
+- **AI Foundry** - Model hosting
+- **Cosmos DB** - Global database
+- **Container Apps** - Backend hosting
+- **Notification Hubs** - Push notifications
+- **Key Vault** - Secrets management
 
 ---
 
-## 📚 Learn More
+## 📝 License
 
-- [MCP Specification](https://modelcontextprotocol.io/)
-- [A2A Protocol](https://learn.microsoft.com/azure/ai-foundry/concepts/agent-to-agent)
-- [Azure Functions MCP Binding](https://learn.microsoft.com/azure/azure-functions/functions-bindings-mcp)
-- [ML-DSA-44 (FIPS 204)](https://csrc.nist.gov/pubs/fips/204/final)
-- [Microsoft Agent Framework](https://github.com/microsoft/agent-framework)
-- [FastMCP Documentation](https://github.com/jlowin/fastmcp)
+MIT License - See LICENSE file
 
 ---
 
@@ -396,108 +457,15 @@ curl http://localhost:8000/health
 
 1. Fork the repository
 2. Create feature branch: `git checkout -b feature/amazing`
-3. Make changes
-4. Test locally: `./dev.sh alice`
-5. Commit: `git commit -m 'Add amazing feature'`
-6. Push: `git push origin feature/amazing`
-7. Submit pull request
-
----
-
-## 📄 License
-
-MIT License - See LICENSE file
+3. Make changes and test
+4. Commit: `git commit -m 'Add amazing feature'`
+5. Push: `git push origin feature/amazing`
+6. Submit pull request
 
 ---
 
 **Status:** ✅ Production Ready  
-**Updated:** 2026-02-18  
-**Code:** ~2,350 lines  
-**Protocols:** MCP + A2A Streaming  
-**Security:** ML-DSA-44 (Post-Quantum)  
-**Tests:** 26/26 passing ✅
-
----
-
-## 🧪 Testing
-
-### Prerequisites
-
-⚠️ **REQUIRED: Foundry must be running before tests**
-
-Tests are **integration tests** that use real LLM calls. Without Foundry running, all agent tests will fail with empty responses.
-
-```bash
-# Terminal 1: Start Foundry (REQUIRED!)
-foundry model run qwen2.5-14b-instruct-generic-gpu:4
-
-# Wait for: "Model management service is running on http://127.0.0.1:<PORT>/openai/status"
-# Note: Foundry uses a random port each time it starts
-```
-
-✅ **MCP/A2A servers start automatically** - test fixtures handle server startup!
-
-### Run All Tests
-```bash
-# Terminal 2: Run complete test suite (Foundry must be running!)
-uv run pytest tests/ -v
-
-# Run with coverage
-uv run pytest tests/ --cov=. --cov-report=html
-
-# Run specific test categories  
-uv run pytest tests/ -m a2a      # A2A agent tests only
-uv run pytest tests/ -m e2e      # E2E integration tests only
-```
-
-### Troubleshooting Tests
-
-**Empty responses / All tests fail:**
-- ✅ Ensure Foundry is running: `foundry model run qwen2.5-14b-instruct-generic-gpu:4`
-- ✅ Check Foundry is responding: `foundry service status`
-
-**Port conflicts:**
-- Tests use ports 8100 (A2A) and 8101 (MCP)
-- Stop other instances: `lsof -i :8100 -i :8101`
-
-**Slow tests:**
-- First run: ~10-30s (server startup)
-- Subsequent runs: Faster (servers reused)
-
-### Test Structure
-
-**conftest.py** - Fixtures and test infrastructure
-- `test_db` - Clean test database for each test
-- `mcp_server` - MCP server on port 8101 (session scope)
-- `a2a_server` - A2A server on port 8100 (session scope)
-- `http_client` - Async HTTP client
-
-**test_a2a_agents.py** - A2A Agent Tests (10 tests)
-- `test_a2a_health_endpoint` - Server health
-- `test_triage_agent_balance_query` - Triage routing
-- `test_inquiry_agent_balance` - Direct agent calls
-- `test_inquiry_agent_history` - History queries
-- `test_transaction_agent_send_money` - Transfers
-- `test_advisor_agent_products` - Product inquiries
-- `test_manager_agent_escalation` - Escalations
-- `test_triage_multiple_queries` - Multiple query types
-
-**test_e2e_flow.py** - Integration Tests (7 tests)
-- `test_full_balance_check_flow` - Complete request flow
-- `test_full_transfer_flow` - Transfer with verification
-- `test_transaction_with_sender_recipient_display` - Display format
-- `test_request_payment_full_flow` - Payment request workflow
-- `test_product_inquiry_full_flow` - Product queries
-- `test_agent_no_tool_call_leakage` - No XML artifacts
-- `test_multiple_sequential_operations` - State consistency
-
-**Total: 17 comprehensive integration tests** covering A2A agents and full end-to-end flows.
-
-### Test Servers
-
-Tests automatically start isolated test servers:
-- MCP Server: `http://localhost:8101/mcp`
-- A2A Server: `http://localhost:8100`
-- Test Database: `data/test_bank.db` (auto-cleaned)
-
-Servers start once per session and shut down automatically after tests complete.
+**Updated:** 2026-03-08  
+**Protocols:** MCP + A2A + REST API  
+**Security:** ML-DSA-44 (Post-Quantum) + JWT + Biometric  
+**Mobile:** iOS (Apple Intelligence) + Android (Gemini Nano)

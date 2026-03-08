@@ -6,6 +6,7 @@ This module provides REST API endpoints for mobile app integration.
 Modules:
     auth - User registration and authentication
     keys - Key backup and restore
+    notifications - Push notifications
 
 Usage:
     from api import app
@@ -17,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.auth import router as auth_router
 from api.keys import router as keys_router
+from api.notifications import router as notifications_router
 
 # Create API app
 app = FastAPI(
@@ -37,6 +39,7 @@ app.add_middleware(
 # Include routers
 app.include_router(auth_router)
 app.include_router(keys_router)
+app.include_router(notifications_router)
 
 
 @app.get("/api/health")

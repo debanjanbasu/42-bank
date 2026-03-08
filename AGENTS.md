@@ -547,3 +547,96 @@ curl -sk https://localhost:8081/_explorer/index.html
 - Production database: `data/bank.db`
 - **Cosmos emulator** requires Docker and ~2GB RAM
 - **Local development** defaults to SQLite (no Docker required)
+- **Mobile app** is the primary client (CLI deprecated)
+
+---
+
+## Mobile Development
+
+### Architecture
+
+42-Bank is **mobile-first** with native AI integration:
+
+- **iOS**: Apple Intelligence (iOS 18+) / Core ML
+- **Android**: Gemini Nano (Pixel 8+) / ML Kit
+- **React Native / Expo**: Cross-platform framework
+
+### Mobile Backend API
+
+New REST endpoints for mobile app (in `api/`):
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /api/auth/register` | User registration with device-generated public key |
+| `POST /api/auth/login` | JWT authentication |
+| `POST /api/keys/backup` | Backup encrypted private key |
+| `POST /api/notifications/register` | Register push notification token |
+
+### Quick Start
+
+```bash
+# Terminal 1: Backend
+./dev.sh alice
+
+# Terminal 2: Mobile app
+cd mobile
+npm install
+npx expo start --dev-client
+```
+
+### Files Created
+
+| File | Purpose |
+|------|---------|
+| `api/__init__.py` | FastAPI app with CORS |
+| `api/auth.py` | User registration & JWT auth |
+| `api/keys.py` | Key backup/restore |
+| `api/notifications.py` | Push notifications |
+| `mobile/src/services/A2AClient.ts` | A2A client for mobile |
+| `mobile/package.json` | Expo dependencies |
+
+### Mobile Environment Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `JWT_SECRET` | JWT signing key | (generate with secrets.token_urlsafe) |
+| `JWT_EXPIRY_HOURS` | Token expiry | `168` (7 days) |
+| `INTERNAL_API_KEY` | Internal service auth | (for notification service) |
+| `AZURE_NOTIFICATION_HUB_NAME` | Notification hub | `42bank-notifications` |
+
+### Development Without App Store
+
+See [MOBILE_DEVELOPMENT.md](MOBILE_DEVELOPMENT.md) for complete guide.
+
+**Options:**
+1. **Expo Go** - Scan QR code (limited native features)
+2. **Expo Dev Client** - Full features, one-time build
+3. **Physical Device** - USB install
+
+### Key Management (Mobile)
+
+Keys are generated and stored on device:
+- **Private key**: Never leaves secure enclave
+- **Public key**: Sent to server for verification
+- **Backup**: Encrypted with recovery key, stored in cloud
+
+### Authentication Flow
+
+```
+Mobile App
+    │
+    ├─> 1. Generate ML-DSA-44 keypair
+    │       Private key → Secure Enclave
+    │
+    ├─> 2. Register user
+    │       POST /api/auth/register
+    │       {username, public_key, device_id}
+    │
+    ├─> 3. Login
+    │       Biometric auth
+    │       POST /api/auth/login
+    │       Return JWT token
+    │
+    └─> 4. A2A communication
+            Headers: Authorization: Bearer JWT
+```
