@@ -7,6 +7,7 @@ Banking tools are provided by MCP server running on port 8001.
 Authentication modes:
 - Key-based: API key in x-api-key header
 - Microsoft Entra ID: Bearer token validation
+- JWT: Mobile app JWT token validation
 - Unauthenticated: For development only
 """
 
@@ -41,6 +42,10 @@ from ledger import LedgerEngine
 
 load_dotenv()
 
+# JWT configuration for mobile app authentication
+JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-in-production")
+JWT_ALGORITHM = "HS256"
+
 
 class AuthMiddleware(BaseHTTPMiddleware):
     """
@@ -49,6 +54,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
     Supports:
     - Key-based: x-api-key header
     - Microsoft Entra ID: Bearer token (optional validation)
+    - JWT: Mobile app JWT token validation
     - Unauthenticated: Allowed in development mode
     """
 
@@ -71,7 +77,23 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         if auth_header.startswith("Bearer "):
-            return await call_next(request)
+            # Validate JWT token for mobile apps
+            token = auth_header[7:]
+            try:
+                import jwt
+                payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+                # Store user info in request state for agents to use
+                request.state.user = payload
+                request.state.session_token = payload.get("sub")
+                return await call_next(request)
+            except jwt.ExpiredSignatureError:
+                return JSONResponse(
+                    {"error": "Unauthorized", "message": "Token has expired"},
+                    status_code=401,
+                )
+            except jwt.InvalidTokenError:
+                # Not a JWT, might be Entra ID token - allow through for now
+                return await call_next(request)
 
         return JSONResponse(
             {

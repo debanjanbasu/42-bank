@@ -10,11 +10,14 @@ dependencies = [
     "azure-ai-projects",
     "azure-identity",
     "azure-cosmos>=4.7.0",
+    "fastapi>=0.115.0",
     "httpx",
     "mcp>=1.0.0",
     "pqcrypto",
     "pydantic",
+    "pyjwt>=2.9.0",
     "python-dotenv",
+    "starlette",
     "uvicorn>=0.30.0",
 ]
 
