@@ -69,6 +69,29 @@ npm start
 # Press 'i' for iOS, 'a' for Android
 ```
 
+### Known Issues & Patches
+
+#### react-native-gifted-chat ColorSchemeName Error
+
+**Problem:** `react-native-gifted-chat@3.3.2` has a type incompatibility with newer React Native. The library's `IGiftedChatContext` expects `getColorScheme()` to return `'light' | 'dark' | null | undefined`, but React Native's `ColorSchemeName` includes `'unspecified'`.
+
+**Solution:** A patch is applied via `patch-package`:
+- File: `mobile/patches/react-native-gifted-chat+3.3.2.patch`
+- The patch casts `colorScheme` to the expected type: `colorScheme as 'light' | 'dark' | null | undefined`
+
+**How it works:**
+1. `patch-package` is installed as a dev dependency
+2. The `postinstall` script in `package.json` automatically applies patches
+3. After `npm install`, the patch fixes the type error in `node_modules`
+
+**If you need to update the patch:**
+```bash
+cd mobile
+# Edit the file in node_modules directly
+# Then create a new patch:
+npx patch-package react-native-gifted-chat
+```
+
 ### Environment Configuration
 
 The mobile app uses environment-based configuration:
@@ -93,8 +116,61 @@ For physical device testing, override in `mobile/app.json`:
 }
 ```
 
+### Path Aliases
+
+The mobile app uses TypeScript path aliases for clean imports:
+
+```typescript
+// ✅ Correct - use @ prefix (resolves to src/)
+import { useAuth } from '@/contexts/AuthContext';
+import { darkTheme } from '@/utils/theme';
+import { API_URL } from '@/config/env';
+
+// ❌ Wrong - don't include src in the path
+import { useAuth } from '@/src/contexts/AuthContext';
+```
+
+This is configured in:
+- `mobile/tsconfig.json` - TypeScript path mapping
+- `mobile/babel.config.js` - Babel module resolver for Metro bundler
+
 ### Key Management Architecture
 
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Mobile Device                                               │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ ┌─────────────────────────────────────────────────────┐     │
+│ │ KeyManager (src/services/KeyManager.ts)             │     │
+│ │ • Uses @noble/post-quantum for ML-DSA-44            │     │
+│ │ • Key generation in JavaScript/WASM                 │     │
+│ └─────────────────────────────────────────────────────┘     │
+│                                                             │
+│ ▼                                                           │
+│                                                             │
+│ ┌─────────────────────────────────────────────────────┐     │
+│ │ Secure Storage (react-native-keychain)              │     │
+│ │ • iOS: Keychain + Secure Enclave                    │     │
+│ │ • Android: Keystore + TEE                           │     │
+│ │ • Private key encrypted, never leaves device        │     │
+│ └─────────────────────────────────────────────────────┘     │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### ML-DSA-44 API Note
+
+The `@noble/post-quantum` library uses `keygen()` (not `keypair()`) for key generation:
+
+```typescript
+// Correct API (v0.3.0+)
+import { ml_dsa44 } from '@noble/post-quantum/ml-dsa';
+const keys = ml_dsa44.keygen(seed);
+// keys.publicKey, keys.secretKey
+
+// Common mistake (older API)
+// const keypair = ml_dsa44.keypair(seed); // ❌ Does not exist
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ Mobile Device                                               │
@@ -122,37 +198,43 @@ For physical device testing, override in `mobile/app.json`:
 ```
 mobile/
 ├── app/
-│   ├── _layout.tsx              # Root layout (Paper + Auth)
+│   ├── _layout.tsx # Root layout (Paper + Auth)
 │   ├── (auth)/
-│   │   ├── _layout.tsx          # Auth stack
-│   │   ├── login.tsx            # Login screen
-│   │   └── register.tsx         # Registration with key generation
+│   │   ├── _layout.tsx # Auth stack
+│   │   ├── login.tsx # Login screen
+│   │   └── register.tsx # Registration with key generation
 │   ├── (tabs)/
-│   │   ├── _layout.tsx          # Tab navigation
-│   │   ├── index.tsx            # Chat screen (Gifted Chat)
-│   │   ├── accounts.tsx         # Account balances
-│   │   ├── transactions.tsx     # Transaction history
-│   │   └── settings.tsx         # Settings & logout
-│   └── +not-found.tsx           # 404
+│   │   ├── _layout.tsx # Tab navigation
+│   │   ├── index.tsx # Chat screen (Gifted Chat)
+│   │   ├── accounts.tsx # Account balances
+│   │   ├── transactions.tsx # Transaction history
+│   │   └── settings.tsx # Settings & logout
+│   └── +not-found.tsx # 404
 ├── src/
-│   ├── config/env.ts            # Environment configuration
+│   ├── config/env.ts # Environment configuration
 │   ├── services/
-│   │   ├── AuthService.ts       # Auth API client
-│   │   ├── KeyManager.ts        # ML-DSA-44 key management
-│   │   └── StorageService.ts    # Secure storage wrapper
+│   │   ├── A2AClient.ts # A2A protocol client (SSE streaming)
+│   │   ├── AuthService.ts # Auth API client
+│   │   ├── KeyManager.ts # ML-DSA-44 key management
+│   │   └── StorageService.ts # Secure storage wrapper
 │   ├── contexts/AuthContext.tsx # Auth state provider
 │   ├── hooks/
-│   │   ├── useA2A.ts            # A2A client hook
-│   │   └── useBiometric.ts      # Biometric auth hook
+│   │   ├── useA2A.ts # A2A client hook
+│   │   └── useBiometric.ts # Biometric auth hook
 │   ├── utils/
-│   │   ├── theme.ts             # Paper theme config
-│   │   └── crypto.ts            # Crypto utilities
-│   └── types/index.ts           # TypeScript types
-├── assets/                      # App icons, splash, etc.
-├── package.json                 # Expo 55 dependencies
-├── app.json                     # Expo configuration
-├── eas.json                     # EAS build config
-└── tsconfig.json                # TypeScript config
+│   │   ├── theme.ts # Paper theme config
+│   │   └── crypto.ts # Crypto utilities
+│   └── types/
+│       ├── index.ts # TypeScript types
+│       └── event-source-polyfill.d.ts # SSE type declarations
+├── patches/
+│   └── react-native-gifted-chat+3.3.2.patch # ColorSchemeName fix
+├── assets/ # App icons, splash, etc.
+├── babel.config.js # Babel config with path aliases
+├── package.json # Expo 55 dependencies
+├── app.json # Expo configuration
+├── eas.json # EAS build config
+└── tsconfig.json # TypeScript config
 ```
 
 ---
