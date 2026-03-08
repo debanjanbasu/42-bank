@@ -1,0 +1,13 @@
+diff --git a/node_modules/react-native-gifted-chat/src/GiftedChat/index.tsx b/node_modules/react-native-gifted-chat/src/GiftedChat/index.tsx
+index 2858b6c..1cee1f5 100644
+--- a/node_modules/react-native-gifted-chat/src/GiftedChat/index.tsx
++++ b/node_modules/react-native-gifted-chat/src/GiftedChat/index.tsx
+@@ -308,7 +308,7 @@ function GiftedChat<TMessage extends IMessage = IMessage> (
+             actionSheetRef.current!.showActionSheetWithOptions,
+         })),
+       getLocale: () => locale,
+-      getColorScheme: () => colorScheme,
++        getColorScheme: () => colorScheme as 'light' | 'dark' | null | undefined,
+     }),
+     [actionSheet, locale, colorScheme]
+   )
