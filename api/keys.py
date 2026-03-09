@@ -21,14 +21,18 @@ Note: The recovery key is NEVER sent to the server.
 We only store a hash of the recovery key for verification.
 """
 
-import os
+import base64
+import binascii
 import hashlib
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+
+from api.deps import get_current_user
+from api.storage import get_api_storage
 
 router = APIRouter(prefix="/api/keys", tags=["key-management"])
 
@@ -112,13 +116,7 @@ class ChallengeResponse(BaseModel):
     expires_at: str
 
 
-# ============ In-Memory Storage (Replace with Cosmos DB in production) ============
-
-# Structure: { user_token: { backup_id: str, encrypted_key: str, public_key: str, ... } }
-_key_backups: dict = {}
-
-# Structure: { backup_id: { nonce: str, created_at: datetime } }
-_restore_challenges: dict = {}
+storage = get_api_storage()
 
 
 # ============ Helper Functions ============
@@ -158,26 +156,6 @@ def verify_recovery_key_proof(
     return secrets.compare_digest(recovery_key_proof, expected)
 
 
-async def get_current_user(authorization: str = Header(None)) -> dict:
-    """Dependency to validate JWT and return user payload."""
-    import jwt
-    
-    JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-in-production")
-    
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(401, "Missing or invalid authorization header")
-    
-    token = authorization[7:]
-    
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-        return payload
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(401, "Token has expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(401, "Invalid token")
-
-
 # ============ Endpoints ============
 
 @router.post("/backup", response_model=BackupResponse)
@@ -207,8 +185,7 @@ async def backup_keys(
     backup_id = generate_backup_id()
     timestamp = datetime.utcnow().isoformat()
     
-    # Store backup (replace with Cosmos DB in production)
-    _key_backups[user_token] = {
+    backup_record = {
         "backup_id": backup_id,
         "encrypted_private_key": request.encrypted_private_key,
         "public_key": request.public_key,
@@ -216,8 +193,9 @@ async def backup_keys(
         "recovery_hint": request.recovery_hint,
         "encryption_version": request.encryption_version,
         "timestamp": timestamp,
-        "username": user.get("username", "unknown")
+        "username": user.get("username", "unknown"),
     }
+    storage.save_key_backup(user_token, backup_record)
     
     return BackupResponse(
         backup_id=backup_id,
@@ -248,26 +226,25 @@ async def get_restore_challenge(
     user_token = user["sub"]
     
     # Check if backup exists
-    if user_token not in _key_backups:
+    backup = storage.get_key_backup_by_user(user_token)
+    if not backup:
         raise HTTPException(404, "No backup found for user")
-    
-    backup = _key_backups[user_token]
     
     if backup["backup_id"] != request.backup_id:
         raise HTTPException(400, "Invalid backup ID")
     
     # Generate nonce
     nonce = generate_nonce()
-    expires_at = datetime.utcnow().replace(
-        minute=datetime.utcnow().minute + 5
-    ).isoformat()
-    
+    expires_at_dt = datetime.utcnow() + timedelta(minutes=5)
+    expires_at = expires_at_dt.isoformat()
+
     # Store challenge
-    _restore_challenges[backup["backup_id"]] = {
-        "nonce": nonce,
-        "created_at": datetime.utcnow().isoformat(),
-        "user_token": user_token
-    }
+    storage.save_challenge(
+        backup_id=backup["backup_id"],
+        nonce=nonce,
+        user_token=user_token,
+        expires_at=expires_at,
+    )
     
     return ChallengeResponse(
         nonce=nonce,
@@ -300,19 +277,27 @@ async def restore_keys(
     user_token = user["sub"]
     
     # Check if backup exists
-    if user_token not in _key_backups:
+    backup = storage.get_key_backup_by_user(user_token)
+    if not backup:
         raise HTTPException(404, "No backup found for user")
-    
-    backup = _key_backups[user_token]
     
     if backup["backup_id"] != request.backup_id:
         raise HTTPException(400, "Invalid backup ID")
     
     # Get challenge
-    if request.backup_id not in _restore_challenges:
+    challenge = storage.get_challenge(request.backup_id)
+    if not challenge:
         raise HTTPException(400, "No challenge found. Request a challenge first.")
-    
-    challenge = _restore_challenges[request.backup_id]
+
+    # Verify challenge owner
+    if challenge.get("user_token") != user_token:
+        raise HTTPException(403, "Challenge does not belong to the authenticated user")
+
+    # Verify challenge expiry
+    expires_at_value = challenge.get("expires_at")
+    if not expires_at_value or datetime.utcnow() > datetime.fromisoformat(expires_at_value):
+        storage.delete_challenge(request.backup_id)
+        raise HTTPException(400, "Challenge has expired. Request a new challenge.")
     
     # Verify nonce matches
     if challenge.get("nonce") != request.nonce:
@@ -327,7 +312,7 @@ async def restore_keys(
         raise HTTPException(401, "Invalid recovery key proof")
     
     # Clear challenge (one-time use)
-    del _restore_challenges[request.backup_id]
+    storage.delete_challenge(request.backup_id)
     
     return RestoreResponse(
         encrypted_private_key=backup["encrypted_private_key"],
@@ -346,10 +331,9 @@ async def get_backup_status(user: dict = Depends(get_current_user)):
     """
     user_token = user["sub"]
     
-    if user_token not in _key_backups:
+    backup = storage.get_key_backup_by_user(user_token)
+    if not backup:
         return BackupStatusResponse(has_backup=False)
-    
-    backup = _key_backups[user_token]
     
     return BackupStatusResponse(
         has_backup=True,
@@ -369,8 +353,7 @@ async def delete_backup(user: dict = Depends(get_current_user)):
     """
     user_token = user["sub"]
     
-    if user_token in _key_backups:
-        del _key_backups[user_token]
+    storage.delete_key_backup(user_token)
     
     return {
         "status": "success",
@@ -402,8 +385,9 @@ async def verify_key_ownership(
     user_token = user["sub"]
     
     # Get user's stored public key
-    if user_token in _key_backups:
-        stored_public_key = _key_backups[user_token]["public_key"]
+    backup = storage.get_key_backup_by_user(user_token)
+    if backup:
+        stored_public_key = backup["public_key"]
     else:
         # Get from ledger
         from ledger import get_ledger
@@ -413,15 +397,25 @@ async def verify_key_ownership(
             raise HTTPException(404, "No public key found for user")
         stored_public_key = user_data.public_key
     
-    # Verify signature (would use pqcrypto in production)
-    # For demo, we'll just check the public key matches
+    # Verify caller is proving ownership of the same key bound to the account
     if public_key != stored_public_key:
         raise HTTPException(401, "Public key mismatch")
-    
-    # TODO: Verify ML-DSA-44 signature
-    # from pqcrypto.sign import verify
-    # if not verify(stored_public_key, message, signature):
-    #     raise HTTPException(401, "Invalid signature")
+
+    try:
+        from pqcrypto.sign.ml_dsa_44 import verify as pq_verify
+
+        public_key_bytes = base64.b64decode(stored_public_key)
+        signature_bytes = base64.b64decode(signature)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(400, "Invalid base64 encoding for key or signature") from exc
+
+    try:
+        is_valid = bool(pq_verify(public_key_bytes, message.encode(), signature_bytes))
+    except Exception:
+        is_valid = False
+
+    if not is_valid:
+        raise HTTPException(401, "Invalid signature")
     
     return {
         "status": "verified",

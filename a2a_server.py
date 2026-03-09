@@ -29,6 +29,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
+from azure_projects_compat import patch_azure_projects_models
+
+patch_azure_projects_models()
+
 from agent_framework.azure import AzureAIClient
 from azure.identity.aio import DefaultAzureCredential
 from azure.core.credentials import AccessToken
@@ -78,9 +82,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         if auth_header.startswith("Bearer "):
             # Validate JWT token for mobile apps
+            import jwt
+
             token = auth_header[7:]
             try:
-                import jwt
                 payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
                 # Store user info in request state for agents to use
                 request.state.user = payload
@@ -92,8 +97,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     status_code=401,
                 )
             except jwt.InvalidTokenError:
-                # Not a JWT, might be Entra ID token - allow through for now
-                return await call_next(request)
+                return JSONResponse(
+                    {
+                        "error": "Unauthorized",
+                        "message": "Invalid bearer token",
+                    },
+                    status_code=401,
+                )
 
         return JSONResponse(
             {
@@ -267,6 +277,45 @@ class A2AAgentHandler:
                 if use_streaming:
                     target_url += ":stream"
 
+                if use_streaming:
+                    async def forward_stream():
+                        async with self.http_client.stream(  # type: ignore[union-attr]
+                            "POST",
+                            target_url,
+                            json=original_body,
+                            headers={"Content-Type": "application/json"},
+                        ) as target_response:
+                            if target_response.status_code != 200:
+                                error_data = {
+                                    "result": {
+                                        "kind": "message",
+                                        "role": "agent",
+                                        "parts": [
+                                            {
+                                                "kind": "text",
+                                                "text": f"Error: upstream agent returned status {target_response.status_code}",
+                                            }
+                                        ],
+                                        "messageId": str(uuid.uuid4()),
+                                        "contextId": context_id,
+                                    }
+                                }
+                                yield f"data: {json.dumps(error_data)}\n\n"
+                                yield "data: [DONE]\n\n"
+                                return
+
+                            async for chunk in target_response.aiter_bytes():
+                                yield chunk
+
+                    return StreamingResponse(
+                        forward_stream(),
+                        media_type="text/event-stream",
+                        headers={
+                            "Cache-Control": "no-cache",
+                            "X-Accel-Buffering": "no",
+                        },
+                    )
+
                 # Forward the original message
                 target_response = await self.http_client.post(  # type: ignore[union-attr]
                     target_url,
@@ -274,37 +323,26 @@ class A2AAgentHandler:
                     headers={"Content-Type": "application/json"},
                 )
 
-                if use_streaming:
-                    # Forward streaming response
-                    return StreamingResponse(
-                        target_response.aiter_bytes(),
-                        media_type="text/event-stream",
-                        headers={
-                            "Cache-Control": "no-cache",
-                            "X-Accel-Buffering": "no",
-                        },
-                    )
-                else:
-                    # Forward JSON response, with error handling for non-200
-                    if target_response.status_code == 200:
-                        try:
-                            return target_response.json()
-                        except Exception:
-                            pass
-                    return {
-                        "result": {
-                            "kind": "message",
-                            "role": "agent",
-                            "parts": [
-                                {
-                                    "kind": "text",
-                                    "text": f"Error: upstream agent returned status {target_response.status_code}",
-                                }
-                            ],
-                            "messageId": str(uuid.uuid4()),
-                            "contextId": context_id,
-                        }
+                # Forward JSON response, with error handling for non-200
+                if target_response.status_code == 200:
+                    try:
+                        return target_response.json()
+                    except Exception:
+                        pass
+                return {
+                    "result": {
+                        "kind": "message",
+                        "role": "agent",
+                        "parts": [
+                            {
+                                "kind": "text",
+                                "text": f"Error: upstream agent returned status {target_response.status_code}",
+                            }
+                        ],
+                        "messageId": str(uuid.uuid4()),
+                        "contextId": context_id,
                     }
+                }
             else:
                 return {
                     "result": {

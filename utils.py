@@ -1,18 +1,38 @@
 """Shared utilities for banking agents."""
+import json
 import os
 import re
 import subprocess
 import urllib.request
-from typing import Optional, Any
+from typing import Any, Optional
+
 from dotenv import load_dotenv
 from agent_framework.openai import OpenAIChatClient
-from agent_framework.azure import AzureAIClient
 from azure.identity.aio import DefaultAzureCredential
 from openai import AsyncOpenAI
-from openai._base_client import AsyncAPIClient
-import httpx
+
+from azure_projects_compat import patch_azure_projects_models
+
+patch_azure_projects_models()
+
+from agent_framework.azure import AzureAIClient
 
 load_dotenv()
+
+
+def _is_valid_foundry_endpoint(endpoint: str, timeout: float = 2.0) -> bool:
+    """Validate that endpoint is an OpenAI-compatible Foundry server with at least one model."""
+    try:
+        req = urllib.request.Request(f"{endpoint}/models", method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            if response.status != 200:
+                return False
+
+            payload = json.loads(response.read().decode("utf-8") or "{}")
+            data = payload.get("data") if isinstance(payload, dict) else None
+            return isinstance(data, list) and len(data) > 0
+    except Exception:
+        return False
 
 
 async def _patched_request(self, *args, **kwargs):
@@ -75,13 +95,8 @@ def get_foundry_local_endpoint() -> str:
     # Try environment variable first (but validate it's still working)
     env_endpoint = os.getenv("FOUNDRY_LOCAL_ENDPOINT")
     if env_endpoint:
-        try:
-            req = urllib.request.Request(f"{env_endpoint}/models", method="GET")
-            with urllib.request.urlopen(req, timeout=2) as response:
-                if response.status == 200:
-                    return env_endpoint
-        except Exception:
-            pass  # Cached endpoint not working, try discovery
+        if _is_valid_foundry_endpoint(env_endpoint):
+            return env_endpoint
     
     # Try to find foundry process and extract port from its output/listening ports
     try:
@@ -106,14 +121,8 @@ def get_foundry_local_endpoint() -> str:
                     if match:
                         port = match.group(1)
                         endpoint = f"http://127.0.0.1:{port}/v1"
-                        # Validate it's actually foundry by checking /v1/models
-                        try:
-                            req = urllib.request.Request(f"{endpoint}/models", method="GET")
-                            with urllib.request.urlopen(req, timeout=2) as response:
-                                if response.status == 200:
-                                    return endpoint
-                        except Exception:
-                            continue
+                        if _is_valid_foundry_endpoint(endpoint):
+                            return endpoint
     except Exception:
         pass
     
@@ -132,14 +141,8 @@ def get_foundry_local_endpoint() -> str:
             if match:
                 host, port = match.groups()
                 endpoint = f"http://{host}:{port}/v1"
-                # Validate endpoint before returning
-                try:
-                    req = urllib.request.Request(f"{endpoint}/models", method="GET")
-                    with urllib.request.urlopen(req, timeout=2) as response:
-                        if response.status == 200:
-                            return endpoint
-                except Exception:
-                    pass
+                if _is_valid_foundry_endpoint(endpoint):
+                    return endpoint
     except Exception:
         pass
     
@@ -150,14 +153,9 @@ def get_foundry_local_endpoint() -> str:
     sample_ports = [8000, 8080, 8888, 9000] + random.sample(range(49152, 65535), 50)
     
     for port in sample_ports:
-        try:
-            endpoint = f"http://127.0.0.1:{port}/v1"
-            req = urllib.request.Request(f"{endpoint}/models", method="GET")
-            with urllib.request.urlopen(req, timeout=0.5) as response:
-                if response.status == 200:
-                    return endpoint
-        except Exception:
-            continue
+        endpoint = f"http://127.0.0.1:{port}/v1"
+        if _is_valid_foundry_endpoint(endpoint, timeout=0.5):
+            return endpoint
     
     raise RuntimeError(
         "Foundry Local not running or not responding.\n"

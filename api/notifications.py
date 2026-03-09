@@ -21,12 +21,13 @@ Endpoints:
 """
 
 import os
-import json
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
-from fastapi import APIRouter, HTTPException, Depends, Header, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, Header
 from pydantic import BaseModel, Field
+
+from api.deps import get_current_user
 
 router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 
@@ -104,25 +105,6 @@ _notification_history: Dict[str, Dict[str, Any]] = {}
 
 
 # ============ Helper Functions ============
-
-async def get_current_user(authorization: str = Header(None)) -> dict:
-    """Validate JWT and return user payload."""
-    import jwt
-    
-    JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-in-production")
-    
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(401, "Missing or invalid authorization header")
-    
-    token = authorization[7:]
-    
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-        return payload
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(401, "Token has expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(401, "Invalid token")
 
 
 async def send_expo_push_notification(
@@ -342,7 +324,6 @@ async def unregister_push_token(
 @router.post("/send", response_model=SendNotificationResponse)
 async def send_notification(
     request: SendNotificationRequest,
-    background_tasks: BackgroundTasks,
     internal_api_key: str = Header(None, alias="X-Internal-API-Key")
 ):
     """

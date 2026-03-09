@@ -77,7 +77,7 @@ export class StorageService {
   static async clearAll(): Promise<void> {
     await this.clearAuth();
     await SecureStore.deleteItemAsync(SECURE_KEYS.DEVICE_ID);
-    await AsyncStorage.clear();
+    await AsyncStorage.removeItem(STORAGE_KEYS.DEVICE_NAME);
   }
 }
 

@@ -17,14 +17,17 @@ Security:
 """
 
 import os
-import jwt
 import hashlib
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Depends, Header
+import jwt
+
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from api.deps import get_current_user, validate_token
+from api.storage import get_api_storage
 from ledger import get_ledger
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
@@ -100,7 +103,7 @@ class UserInfo(BaseModel):
     username: str
     public_key: str
     created_at: Optional[str] = None
-    devices: list = []
+    devices: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # ============ Helper Functions ============
@@ -131,30 +134,34 @@ def generate_refresh_token(user_id: str, username: str, device_id: str) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
-def validate_token(token: str, expected_type: str = "access") -> dict:
-    """Validate JWT token and return payload."""
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        if payload.get("type") != expected_type:
-            raise HTTPException(401, f"Invalid token type: expected {expected_type}")
-        return payload
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(401, "Token has expired")
-    except jwt.InvalidTokenError as e:
-        raise HTTPException(401, f"Invalid token: {e}")
-
-
-async def get_current_user(authorization: str = Header(None)) -> dict:
-    """Dependency to validate JWT and return user payload."""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(401, "Missing or invalid authorization header")
-    token = authorization[7:]
-    return validate_token(token)
-
-
 def hash_device_id(device_id: str) -> str:
     """Hash device ID for storage."""
     return hashlib.sha256(device_id.encode()).hexdigest()
+
+
+storage = get_api_storage()
+
+
+def register_device_for_user(
+    user_token: str,
+    device_id: str,
+    device_name: Optional[str],
+    biometric_enabled: bool,
+    push_token: Optional[str],
+) -> None:
+    device_hash = hash_device_id(device_id)
+    storage.upsert_device(
+        user_token=user_token,
+        device_id_hash=device_hash,
+        device_name=device_name,
+        biometric_enabled=biometric_enabled,
+        push_token=push_token,
+    )
+
+
+def has_registered_device(user_token: str, device_id: str) -> bool:
+    device_hash = hash_device_id(device_id)
+    return storage.has_device(user_token, device_hash)
 
 
 # ============ Endpoints ============
@@ -196,9 +203,13 @@ async def register(request: RegisterRequest):
     if not success:
         raise HTTPException(500, "Failed to create user")
     
-    # Store device registration (would be in Cosmos DB in production)
-    # For now, we'll add device info to user metadata
-    device_hash = hash_device_id(request.device_id)
+    register_device_for_user(
+        user_token=user_token,
+        device_id=request.device_id,
+        device_name=request.device_name,
+        biometric_enabled=request.biometric_enabled,
+        push_token=request.push_token,
+    )
     
     # Generate JWT tokens
     access_token = generate_jwt(user_token, request.username, request.device_id)
@@ -235,12 +246,11 @@ async def login(request: LoginRequest):
     if not user:
         raise HTTPException(401, "Invalid credentials")
     
-    # In production, validate device_id is registered for this user
-    # For now, we'll just check the user exists
-    device_hash = hash_device_id(request.device_id)
-    
-    # TODO: Check if device is registered
-    # TODO: Validate biometric token if user has biometric_enabled
+    if not has_registered_device(user.token, request.device_id):
+        raise HTTPException(
+            401,
+            "Device is not registered for this user. Register from a trusted device first.",
+        )
     
     # Generate new JWT tokens
     access_token = generate_jwt(user.token, user.username, request.device_id)
@@ -294,8 +304,13 @@ async def register_device(
     Users can have multiple devices (phone, tablet).
     Each device needs to be registered separately.
     """
-    # TODO: Store device registration in database
-    # For now, just return success
+    register_device_for_user(
+        user_token=user["sub"],
+        device_id=request.device_id,
+        device_name=request.device_name,
+        biometric_enabled=request.biometric_enabled,
+        push_token=request.push_token,
+    )
     
     return {
         "status": "success",
@@ -326,7 +341,7 @@ async def get_user_info(user: dict = Depends(get_current_user)):
         username=user_data.username,
         public_key=user_data.public_key or "",
         created_at=getattr(user_data, "created_at", None),
-        devices=[]  # TODO: List registered devices
+        devices=storage.list_devices(user_data.token),
     )
 
 

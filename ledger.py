@@ -1,10 +1,10 @@
-import json
-import os
 import hashlib
+import os
 import sqlite3
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
-from typing import Dict, List, Optional, Protocol, Any, Union
 
 
 class Transaction(BaseModel):
@@ -45,7 +45,9 @@ class Product(BaseModel):
 class LedgerEngine:
     def __init__(self, db_path: str = "data/bank.db") -> None:
         self.db_path = db_path
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        db_dir = os.path.dirname(self.db_path)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
         self._init_db()
 
     def _init_db(self) -> None:
@@ -94,14 +96,34 @@ class LedgerEngine:
                     "INSERT INTO products VALUES (?, ?, ?, ?, ?)", products
                 )
 
+    @staticmethod
+    def _row_to_user(row: Optional[sqlite3.Row | tuple[str]]) -> Optional[UserAccount]:
+        if not row:
+            return None
+        raw = row[0] if isinstance(row, tuple) else row["data"]
+        return UserAccount.model_validate_json(raw)
+
+    def _get_user_from_conn(self, token: str, conn: sqlite3.Connection) -> Optional[UserAccount]:
+        row = conn.execute("SELECT data FROM users WHERE token = ?", (token,)).fetchone()
+        return self._row_to_user(row)
+
     def _get_user(self, token: str) -> Optional[UserAccount]:
         if not token:
             return None
         with sqlite3.connect(self.db_path) as conn:
+            return self._get_user_from_conn(token, conn)
+
+    def get_user(self, token: str) -> Optional[UserAccount]:
+        return self._get_user(token)
+
+    def get_user_by_username(self, username: str) -> Optional[UserAccount]:
+        if not username:
+            return None
+        with sqlite3.connect(self.db_path) as conn:
             row = conn.execute(
-                "SELECT data FROM users WHERE token = ?", (token,)
+                "SELECT data FROM users WHERE username = ?", (username,)
             ).fetchone()
-            return UserAccount.model_validate_json(row[0]) if row else None
+            return self._row_to_user(row)
 
     def _save_user(self, user: Optional[UserAccount], conn=None) -> None:
         if not user:
@@ -127,6 +149,26 @@ class LedgerEngine:
                     ("USER_UPDATE", data),
                 )
 
+    def create_user(
+        self,
+        token: str,
+        username: str,
+        initial_balance: float = 0.0,
+        public_key: Optional[str] = None,
+    ) -> bool:
+        if not token or not username:
+            return False
+        if self.get_user_by_username(username):
+            return False
+
+        user = UserAccount(token=token, username=username, public_key=public_key)
+        user.accounts["checking"].balance = max(initial_balance, 0.0)
+        try:
+            self._save_user(user)
+        except sqlite3.IntegrityError:
+            return False
+        return True
+
     def register_user(
         self,
         token: str,
@@ -134,9 +176,16 @@ class LedgerEngine:
         public_key_hex: str,
         initial_balance: float = 0.0,
     ) -> None:
-        user = self._get_user(token) or UserAccount(
-            token=token, username=username, public_key=public_key_hex
-        )
+        user = self._get_user(token)
+        if not user:
+            self.create_user(
+                token=token,
+                username=username,
+                initial_balance=initial_balance,
+                public_key=public_key_hex,
+            )
+            return
+
         user.public_key = public_key_hex
         if user.accounts["checking"].balance == 0.0:
             user.accounts["checking"].balance = initial_balance
@@ -203,50 +252,47 @@ class LedgerEngine:
         ):
             return False
 
-        # Get recipient token
-        recipient_token = self.get_token_by_username(recipient_username)
-        if not recipient_token:
-            return False
-            
-        # Prevent self-transfer to same account
-        if sender_token == recipient_token and from_account == to_account:
-            return False
+        try:
+            with sqlite3.connect(self.db_path, timeout=10) as conn:
+                conn.execute("BEGIN IMMEDIATE")
 
-        # Get both users
-        s_user = self._get_user(sender_token)
-        r_user = self._get_user(recipient_token)
-        
-        # Validate users and accounts exist
-        if not s_user or not r_user:
-            return False
-        if from_account not in s_user.accounts or to_account not in r_user.accounts:
-            return False
-            
-        # Check sufficient funds
-        if s_user.accounts[from_account].balance < amount:
-            return False
+                recipient_row = conn.execute(
+                    "SELECT token FROM users WHERE username = ?", (recipient_username,)
+                ).fetchone()
+                recipient_token = str(recipient_row[0]) if recipient_row else None
+                if not recipient_token:
+                    return False
 
-        # Create transaction record
-        tx = Transaction(
-            sender=s_user.username,
-            recipient=r_user.username,
-            amount=amount,
-            description=description,
-            account_type=from_account,
-        )
-        
-        # Atomically update both users
-        # NOTE: SQLite transactions are used via connection context manager in _save_user
-        s_user.accounts[from_account].balance -= amount
-        s_user.accounts[from_account].history.append(tx)
-        r_user.accounts[to_account].balance += amount
-        r_user.accounts[to_account].history.append(tx)
+                if sender_token == recipient_token and from_account == to_account:
+                    return False
 
-        # Save both users atomically in a single transaction
-        with sqlite3.connect(self.db_path) as conn:
-            self._save_user(s_user, conn)
-            self._save_user(r_user, conn)
-        return True
+                s_user = self._get_user_from_conn(sender_token, conn)
+                r_user = self._get_user_from_conn(recipient_token, conn)
+                if not s_user or not r_user:
+                    return False
+                if from_account not in s_user.accounts or to_account not in r_user.accounts:
+                    return False
+                if s_user.accounts[from_account].balance < amount:
+                    return False
+
+                tx = Transaction(
+                    sender=s_user.username,
+                    recipient=r_user.username,
+                    amount=amount,
+                    description=description,
+                    account_type=from_account,
+                )
+
+                s_user.accounts[from_account].balance -= amount
+                s_user.accounts[from_account].history.append(tx)
+                r_user.accounts[to_account].balance += amount
+                r_user.accounts[to_account].history.append(tx)
+
+                self._save_user(s_user, conn)
+                self._save_user(r_user, conn)
+                return True
+        except sqlite3.Error:
+            return False
 
     def open_account(self, token: str, account_type: str) -> bool:
         user = self._get_user(token)
@@ -289,7 +335,7 @@ class LedgerEngine:
             return False
 
         # Create unique request ID
-        req_id = hashlib.md5(
+        req_id = hashlib.sha256(
             f"{req_user.username}{datetime.now().isoformat()}{amount}".encode()
         ).hexdigest()[:8]
         
@@ -383,3 +429,14 @@ class LedgerEngine:
                     "SELECT * FROM change_feed WHERE id > ? ORDER BY id ASC", (last_id,)
                 ).fetchall()
             ]
+
+
+_ledger_instance: Optional[LedgerEngine] = None
+
+
+def get_ledger() -> LedgerEngine:
+    global _ledger_instance
+    if _ledger_instance is None:
+        db_path = os.getenv("TEST_DB") or os.getenv("BANK_DB_PATH") or "data/bank.db"
+        _ledger_instance = LedgerEngine(db_path=db_path)
+    return _ledger_instance

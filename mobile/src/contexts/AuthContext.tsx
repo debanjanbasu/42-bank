@@ -78,8 +78,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const register = useCallback(async (username: string) => {
     setIsLoading(true);
+    let generatedKeys = false;
     try {
       const keyPair = await KeyManager.generateKeyPair();
+      generatedKeys = true;
       const deviceId = await StorageService.getOrCreateDeviceId();
       const response = await AuthService.register({
         username,
@@ -91,6 +93,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await StorageService.setToken(response.token);
       await StorageService.setRefreshToken(response.refresh_token);
       setUser(response.user);
+    } catch (error) {
+      // Roll back generated keys when registration fails server-side.
+      if (generatedKeys) {
+        await KeyManager.deleteKeys();
+      }
+      throw error;
     } finally {
       setIsLoading(false);
     }
