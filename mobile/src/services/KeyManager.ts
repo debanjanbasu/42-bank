@@ -1,6 +1,6 @@
 import * as Keychain from 'react-native-keychain';
 import * as Crypto from 'expo-crypto';
-import { ml_dsa44 } from '@noble/post-quantum/ml-dsa';
+import { ml_dsa44 } from '@noble/post-quantum/ml-dsa.js';
 
 const PRIVATE_KEY_SERVICE = 'com.bank42.mldsa44_private';
 const PUBLIC_KEY_SERVICE = 'com.bank42.mldsa44_public';
@@ -56,7 +56,7 @@ export class KeyManager {
 
     const privateKey = this.base64ToUint8Array(credentials.password);
     const dataBytes = new TextEncoder().encode(data);
-    const signature = ml_dsa44.sign(privateKey, dataBytes);
+    const signature = ml_dsa44.sign(dataBytes, privateKey);
 
     return this.uint8ArrayToBase64(signature);
   }
@@ -69,7 +69,7 @@ export class KeyManager {
     const publicKey = this.base64ToUint8Array(publicKeyBase64);
     const signature = this.base64ToUint8Array(signatureBase64);
     const dataBytes = new TextEncoder().encode(data);
-    return ml_dsa44.verify(publicKey, dataBytes, signature);
+    return ml_dsa44.verify(signature, dataBytes, publicKey);
   }
 
   static async getPublicKey(): Promise<string | null> {
