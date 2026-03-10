@@ -526,8 +526,6 @@ assert is_transaction_successful(text)
 | `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Model deployment | `Qwen3.5-35B-A3B` |
 | `JWT_SECRET` | JWT signing key | (generate with secrets.token_urlsafe) |
 | `APP_ENV` | Runtime environment | `development` / `staging` / `production` |
-| `SSL_CERT_FILE` | TLS cert path (production standalone only) | `/etc/ssl/cert.pem` |
-| `SSL_KEY_FILE` | TLS key path (production standalone only) | `/etc/ssl/key.pem` |
 
 ---
 
@@ -540,5 +538,4 @@ assert is_transaction_successful(text)
 - Each test function uses an isolated Cosmos DB database (deleted on teardown)
 - `data/keys/` is still used by `IdentityManager` for ML-DSA-44 key files
 - All Cosmos data operations are **async** (`azure.cosmos.aio`); `_init_db()` uses sync SDK at startup only
-- `SSL_CERT_FILE` / `SSL_KEY_FILE` are only needed when running standalone (without Azure App Service / Front Door TLS termination)
 - Push notifications require a physical device; simulator will skip token registration gracefully

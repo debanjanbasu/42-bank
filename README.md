@@ -204,14 +204,13 @@ User: "What's my balance?"
 │
 ├── a2a_server.py                 # A2A server (5 agents)
 ├── mcp_server.py                 # MCP server (9 tools)
-├── ledger.py                     # Transaction ledger
+├── ledger.py                     # Transaction ledger (async Cosmos)
 ├── identity.py                   # ML-DSA-44 crypto
 │
 ├── docker-compose.yml            # Cosmos DB emulator
-├── Dockerfile.banking-mcp        # Container build
 │
 ├── AZURE_DEPLOYMENT.md           # Azure deployment guide
-├── MOBILE_DEVELOPMENT.md         # Mobile dev guide (NEW)
+├── MOBILE_DEVELOPMENT.md         # Mobile dev guide
 ├── AGENTS.md                     # AI agent instructions
 └── README.md                     # This file
 ```
@@ -254,18 +253,11 @@ npx expo run:android
 ### Quick Deploy
 
 ```bash
-# 1. Deploy Cosmos DB MCP Toolkit
-git clone https://github.com/AzureCosmosDB/MCPToolKit.git
-cd MCPToolKit && azd up
-
-# 2. Deploy 42-Bank infrastructure
-cd ../42-bank
+# 1. Deploy 42-Bank infrastructure
 az deployment sub create --location eastus --template-file infra/main.bicep
 
-# 3. Deploy backend
-az containerapp create --name 42bank-backend ...
-
-# 4. Initialize database
+# 2. Initialize database
+export AZURE_COSMOS_CONNECTION_STRING="AccountEndpoint=...;AccountKey=..."
 uv run python bootstrap.py
 ```
 
