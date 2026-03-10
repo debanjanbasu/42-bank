@@ -81,11 +81,13 @@ Copy `.env.example` to `.env` and configure:
 |----------|----------|-------------|
 | `JWT_SECRET` | Yes | Random string ≥32 chars for JWT signing |
 | `APP_ENV` | No | `development` (default), `staging`, `production` |
-| `FOUNDRY_LOCAL_ENDPOINT` | No | Override Foundry endpoint discovery |
+| `FOUNDRY_LOCAL_ENDPOINT` | No | Override Foundry endpoint auto-discovery |
 | `AZURE_AI_PROJECT_ENDPOINT` | Production | Azure AI Foundry project URL |
 | `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Production | Model deployment name |
 | `AZURE_COSMOS_CONNECTION_STRING` | Auto-set by dev.sh | Cosmos DB connection string |
 | `COSMOS_DATABASE` | Auto-set by dev.sh | Cosmos database name (default: `banking`) |
+| `SSL_CERT_FILE` | Production (standalone) | Path to TLS certificate (not needed with Azure App Service) |
+| `SSL_KEY_FILE` | Production (standalone) | Path to TLS private key (not needed with Azure App Service) |
 
 Generate a strong JWT secret:
 ```bash

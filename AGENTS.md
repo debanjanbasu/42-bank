@@ -43,10 +43,10 @@ Docker is **required** for local development. The emulator runs at `https://loca
 
 ### Key Modules
 
-- `db/cosmos.py` — Singleton `CosmosClient`, `get_container()`, `get_database()` helpers
-- `ledger.py` — `LedgerEngine` with Cosmos-backed user/balance/transfer operations
-- `api/storage.py` — `APIStorage` with Cosmos-backed device/key/token operations
-- `audit_service.py` — `AuditLogger` writing to `change_feed` container
+- `db/cosmos.py` — Sync and **async** Cosmos singletons; `get_container()` / `get_database()` (sync, used at init) and `get_async_container()` / `get_async_database()` (async, used for all data operations)
+- `ledger.py` — `LedgerEngine` with fully **async** Cosmos-backed operations (`async def get_user`, `transfer`, `get_history`, etc.)
+- `api/storage.py` — `APIStorage` with fully **async** Cosmos-backed device/key/token operations
+- `audit_service.py` — `AuditLogger` with `async def log_event` / `log_transfer` / `log_login` writing to `change_feed` container
 
 ---
 
@@ -58,6 +58,8 @@ Docker is **required** for local development. The emulator runs at `https://loca
 - **React Native Gifted Chat** - Chat UI component
 - **noble-post-quantum** - ML-DSA-44 cryptography (JS/WASM)
 - **react-native-keychain** - Secure storage (Keychain/Keystore)
+- **expo-notifications** - Push notification registration and handling
+- **@react-native-async-storage/async-storage** - Offline cache (accounts, transactions)
 
 ### Quick Start
 
@@ -217,13 +219,20 @@ mobile/
 │   ├── config/env.ts # Environment configuration
 │   ├── services/
 │   │   ├── A2AClient.ts # A2A protocol client (SSE streaming)
+│   │   ├── APIClient.ts # Centralized HTTP client (15s timeout, typed errors)
 │   │   ├── AuthService.ts # Auth API client
+│   │   ├── CacheService.ts # Offline cache with 5-min TTL (AsyncStorage)
 │   │   ├── KeyManager.ts # ML-DSA-44 key management
+│   │   ├── NotificationService.ts # Push notification registration & listeners
 │   │   └── StorageService.ts # Secure storage wrapper
-│   ├── contexts/AuthContext.tsx # Auth state provider
+│   ├── components/
+│   │   ├── ErrorBoundary.tsx # React error boundary
+│   │   └── TransactionConfirmModal.tsx # Biometric-gated signing confirmation sheet
+│   ├── contexts/AuthContext.tsx # Auth state provider (push token, session timeout)
 │   ├── hooks/
 │   │   ├── useA2A.ts # A2A client hook
-│   │   └── useBiometric.ts # Biometric auth hook
+│   │   ├── useBiometric.ts # Biometric auth hook
+│   │   └── useTransactionSigning.ts # Promise-based signing state machine
 │   ├── utils/
 │   │   ├── theme.ts # Paper theme config
 │   │   └── crypto.ts # Crypto utilities
@@ -516,6 +525,9 @@ assert is_transaction_successful(text)
 | `AZURE_AI_PROJECT_ENDPOINT` | Foundry project | `https://42-bank.cognitiveservices.azure.com/` |
 | `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Model deployment | `Qwen3.5-35B-A3B` |
 | `JWT_SECRET` | JWT signing key | (generate with secrets.token_urlsafe) |
+| `APP_ENV` | Runtime environment | `development` / `staging` / `production` |
+| `SSL_CERT_FILE` | TLS cert path (production standalone only) | `/etc/ssl/cert.pem` |
+| `SSL_KEY_FILE` | TLS key path (production standalone only) | `/etc/ssl/key.pem` |
 
 ---
 
@@ -527,3 +539,6 @@ assert is_transaction_successful(text)
 - Tests use ports 8100 (A2A) and 8101 (MCP) to avoid conflicts
 - Each test function uses an isolated Cosmos DB database (deleted on teardown)
 - `data/keys/` is still used by `IdentityManager` for ML-DSA-44 key files
+- All Cosmos data operations are **async** (`azure.cosmos.aio`); `_init_db()` uses sync SDK at startup only
+- `SSL_CERT_FILE` / `SSL_KEY_FILE` are only needed when running standalone (without Azure App Service / Front Door TLS termination)
+- Push notifications require a physical device; simulator will skip token registration gracefully
