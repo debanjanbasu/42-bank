@@ -97,8 +97,13 @@ export default function SettingsScreen() {
                     value={biometricEnabled}
                     onValueChange={handleBiometricToggle}
                     color={darkTheme.colors.primary}
+                    accessible={true}
+                    accessibilityLabel={`${biometricType} authentication toggle`}
+                    accessibilityHint={biometricEnabled ? 'Tap to disable biometric authentication' : 'Tap to enable biometric authentication'}
                   />
                 )}
+                accessible={true}
+                accessibilityLabel={`${biometricType} Authentication`}
               />
               <Divider />
             </>
@@ -109,6 +114,9 @@ export default function SettingsScreen() {
             description="Export encrypted key backup"
             left={(props) => <List.Icon {...props} icon="cloud-upload" />}
             onPress={handleKeyBackup}
+            accessible={true}
+            accessibilityLabel="Backup Keys"
+            accessibilityHint="Exports an encrypted backup of your cryptographic keys"
           />
           <Divider />
 
@@ -118,6 +126,9 @@ export default function SettingsScreen() {
             left={(props) => <List.Icon {...props} icon="delete" color={darkTheme.colors.error} />}
             onPress={handleDeleteKeys}
             titleStyle={{ color: darkTheme.colors.error }}
+            accessible={true}
+            accessibilityLabel="Delete Keys"
+            accessibilityHint="Permanently removes all cryptographic keys. You will need to register again."
           />
         </List.Section>
       </Card>
@@ -145,6 +156,9 @@ export default function SettingsScreen() {
             description="Get help with 42-Bank"
             left={(props) => <List.Icon {...props} icon="help-circle" />}
             onPress={() => Alert.alert('Help', 'Contact support at support@42bank.com')}
+            accessible={true}
+            accessibilityLabel="Help and Support"
+            accessibilityHint="Opens help and support information"
           />
         </List.Section>
       </Card>
@@ -154,6 +168,9 @@ export default function SettingsScreen() {
         onPress={handleLogout}
         style={styles.logoutButton}
         buttonColor={darkTheme.colors.error}
+        accessible={true}
+        accessibilityLabel="Logout"
+        accessibilityHint="Logs you out and deletes your keys from this device"
       >
         Logout
       </Button>

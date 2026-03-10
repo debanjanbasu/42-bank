@@ -116,9 +116,6 @@ class ChallengeResponse(BaseModel):
     expires_at: str
 
 
-storage = get_api_storage()
-
-
 # ============ Helper Functions ============
 
 def generate_backup_id() -> str:
@@ -195,7 +192,7 @@ async def backup_keys(
         "timestamp": timestamp,
         "username": user.get("username", "unknown"),
     }
-    storage.save_key_backup(user_token, backup_record)
+    await get_api_storage().save_key_backup(user_token, backup_record)
     
     return BackupResponse(
         backup_id=backup_id,
@@ -226,7 +223,7 @@ async def get_restore_challenge(
     user_token = user["sub"]
     
     # Check if backup exists
-    backup = storage.get_key_backup_by_user(user_token)
+    backup = await get_api_storage().get_key_backup_by_user(user_token)
     if not backup:
         raise HTTPException(404, "No backup found for user")
     
@@ -239,7 +236,7 @@ async def get_restore_challenge(
     expires_at = expires_at_dt.isoformat()
 
     # Store challenge
-    storage.save_challenge(
+    await get_api_storage().save_challenge(
         backup_id=backup["backup_id"],
         nonce=nonce,
         user_token=user_token,
@@ -277,7 +274,7 @@ async def restore_keys(
     user_token = user["sub"]
     
     # Check if backup exists
-    backup = storage.get_key_backup_by_user(user_token)
+    backup = await get_api_storage().get_key_backup_by_user(user_token)
     if not backup:
         raise HTTPException(404, "No backup found for user")
     
@@ -285,7 +282,7 @@ async def restore_keys(
         raise HTTPException(400, "Invalid backup ID")
     
     # Get challenge
-    challenge = storage.get_challenge(request.backup_id)
+    challenge = await get_api_storage().get_challenge(request.backup_id)
     if not challenge:
         raise HTTPException(400, "No challenge found. Request a challenge first.")
 
@@ -296,7 +293,7 @@ async def restore_keys(
     # Verify challenge expiry
     expires_at_value = challenge.get("expires_at")
     if not expires_at_value or datetime.utcnow() > datetime.fromisoformat(expires_at_value):
-        storage.delete_challenge(request.backup_id)
+        await get_api_storage().delete_challenge(request.backup_id)
         raise HTTPException(400, "Challenge has expired. Request a new challenge.")
     
     # Verify nonce matches
@@ -312,7 +309,7 @@ async def restore_keys(
         raise HTTPException(401, "Invalid recovery key proof")
     
     # Clear challenge (one-time use)
-    storage.delete_challenge(request.backup_id)
+    await get_api_storage().delete_challenge(request.backup_id)
     
     return RestoreResponse(
         encrypted_private_key=backup["encrypted_private_key"],
@@ -331,7 +328,7 @@ async def get_backup_status(user: dict = Depends(get_current_user)):
     """
     user_token = user["sub"]
     
-    backup = storage.get_key_backup_by_user(user_token)
+    backup = await get_api_storage().get_key_backup_by_user(user_token)
     if not backup:
         return BackupStatusResponse(has_backup=False)
     
@@ -353,7 +350,7 @@ async def delete_backup(user: dict = Depends(get_current_user)):
     """
     user_token = user["sub"]
     
-    storage.delete_key_backup(user_token)
+    await get_api_storage().delete_key_backup(user_token)
     
     return {
         "status": "success",
@@ -385,14 +382,14 @@ async def verify_key_ownership(
     user_token = user["sub"]
     
     # Get user's stored public key
-    backup = storage.get_key_backup_by_user(user_token)
+    backup = await get_api_storage().get_key_backup_by_user(user_token)
     if backup:
         stored_public_key = backup["public_key"]
     else:
         # Get from ledger
         from ledger import get_ledger
         ledger = get_ledger()
-        user_data = ledger.get_user(user_token)
+        user_data = await ledger.get_user(user_token)
         if not user_data or not user_data.public_key:
             raise HTTPException(404, "No public key found for user")
         stored_public_key = user_data.public_key

@@ -12,7 +12,7 @@ import asyncio
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
-from ledger import LedgerEngine
+from ledger import LedgerEngine, AccountType
 from identity import IdentityManager
 
 load_dotenv()
@@ -27,51 +27,54 @@ _username: Optional[str] = None
 _session_token: Optional[str] = None
 
 
-def init_context(username: str, db_path: Optional[str] = None) -> None:
-    """Initialize banking context."""
+def init_context(username: str) -> None:
+    """Initialize banking context (sync wrapper for async init)."""
+    asyncio.run(_async_init_context(username))
+
+
+async def _async_init_context(username: str) -> None:
     global _ledger, _identity, _username, _session_token
     _identity = IdentityManager()
-    _ledger = LedgerEngine(db_path=db_path) if db_path else LedgerEngine()
+    _ledger = LedgerEngine()
     _username = username
     _session_token = _identity.get_token(username)
     if not _session_token:
         raise ValueError(f"User {username} not found")
-    
-    # Only register user if they don't already exist in the ledger
-    existing_user = _ledger._get_user(_session_token)
+
+    existing_user = await _ledger._get_user(_session_token)
     if not existing_user:
         pk = _identity.get_public_key(username)
         if pk:
-            _ledger.register_user(_session_token, username, pk.hex())
+            await _ledger.register_user(_session_token, username, pk.hex())
 
 
 @mcp.tool()
-def check_balance() -> str:
+async def check_balance() -> str:
     """View your checking account balance."""
     if not _ledger or not _session_token:
         return "ERROR: Not initialized"
-    balance = _ledger.get_balance(_session_token, "checking")
+    balance = await _ledger.get_balance(_session_token, AccountType.CHECKING)
     return f"Your checking account balance is ${balance:.2f}"
 
 
 @mcp.tool()
-def view_history() -> str:
+async def view_history() -> str:
     """View transaction history for your checking account."""
     if not _ledger or not _session_token:
         return "ERROR: Not initialized"
-    return _ledger.get_history(_session_token, "checking")
+    return await _ledger.get_history(_session_token, "checking")
 
 
 @mcp.tool()
-def list_my_accounts() -> str:
+async def list_my_accounts() -> str:
     """List your checking account and balance."""
     if not _ledger or not _session_token:
         return "ERROR: Not initialized"
-    return _ledger.list_user_accounts(_session_token)
+    return await _ledger.list_user_accounts(_session_token)
 
 
 @mcp.tool()
-def send_money(to: str, amount: float, note: str) -> str:
+async def send_money(to: str, amount: float, note: str) -> str:
     """
     Send money from your checking account to another user.
     
@@ -91,20 +94,22 @@ def send_money(to: str, amount: float, note: str) -> str:
         return "FAILED: Recipient username and note are required."
     if amount <= 0:
         return "FAILED: Amount must be positive."
+    if amount > 1_000_000:
+        return "FAILED: Amount exceeds maximum transfer limit of $1,000,000."
     
     # Check balance first for better error message
-    balance = _ledger.get_balance(_session_token, "checking")
+    balance = await _ledger.get_balance(_session_token, "checking")
     if balance < amount:
         return f"FAILED: Insufficient funds. Balance: ${balance:.2f}, Requested: ${amount:.2f}"
     
     # Verify recipient exists
-    recipient_token = _ledger.get_token_by_username(to)
+    recipient_token = await _ledger.get_token_by_username(to)
     if not recipient_token:
         return f"FAILED: User '{to}' not found."
     
     # Sign and execute transfer
     sig = _identity.sign_message(_username, f"{to}{amount}{note}".encode())
-    success = _ledger.transfer(
+    success = await _ledger.transfer(
         _session_token, to, amount, note, "checking", "checking", signature=sig.hex()
     )
     
@@ -115,7 +120,7 @@ def send_money(to: str, amount: float, note: str) -> str:
 
 
 @mcp.tool()
-def request_money(from_user: str, amount: float, note: str) -> str:
+async def request_money(from_user: str, amount: float, note: str) -> str:
     """
     Request payment from another user.
     
@@ -137,11 +142,11 @@ def request_money(from_user: str, amount: float, note: str) -> str:
         return "FAILED: Amount must be positive."
     
     # Check if user exists
-    target_token = _ledger.get_token_by_username(from_user)
+    target_token = await _ledger.get_token_by_username(from_user)
     if not target_token:
         return f"FAILED: User '{from_user}' not found."
     
-    success = _ledger.request_funds(_session_token, from_user, amount, note)
+    success = await _ledger.request_funds(_session_token, from_user, amount, note)
     return (
         f"Requested ${amount:.2f} from {from_user}."
         if success
@@ -150,74 +155,77 @@ def request_money(from_user: str, amount: float, note: str) -> str:
 
 
 @mcp.tool()
-def list_pending_requests() -> List[Dict[str, Any]]:
+async def list_pending_requests() -> List[Dict[str, Any]]:
     """List pending payment requests."""
     if not _ledger or not _session_token:
         return [{"error": "Not initialized"}]
-    return _ledger.get_pending_requests(_session_token)
+    return await _ledger.get_pending_requests(_session_token)
 
 
 @mcp.tool()
-def approve_payment(request_id: str) -> str:
+async def approve_payment(request_id: str) -> str:
     """Approve a payment request."""
     if not _ledger or not _identity or not _username or not _session_token:
         return "ERROR: Not initialized"
     sig = _identity.sign_message(_username, f"APPROVE{request_id}".encode())
-    success = _ledger.approve_request(_session_token, request_id, signature=sig.hex())
+    success = await _ledger.approve_request(_session_token, request_id, signature=sig.hex())
     return "Payment approved." if success else "FAILED: Check funds or ID."
 
 
 @mcp.tool()
-def list_products() -> str:
+async def list_products() -> str:
     """List bank products."""
     if not _ledger:
         return "ERROR: Not initialized"
-    prods = _ledger.get_products()
+    prods = await _ledger.get_products()
     return "Products:\n" + "\n".join(
         f"- {p.name} ({p.type}): {p.interest_rate}%" for p in prods
     )
 
 
 @mcp.tool()
-def open_new_account(account_type: str) -> str:
+async def open_new_account(account_type: str) -> str:
     """Open a new account."""
     if not _ledger or not _session_token:
         return "ERROR: Not initialized"
+    valid_types = {AccountType.CHECKING, AccountType.SAVINGS, "loan", "mortgage", "credit_card"}
+    if account_type not in valid_types:
+        return (
+            f"FAILED: Invalid account type '{account_type}'. "
+            f"Valid types: {', '.join(str(t) for t in valid_types)}"
+        )
     return (
         f"Opened {account_type} account."
-        if _ledger.open_account(_session_token, account_type)
+        if await _ledger.open_account(_session_token, account_type)
         else "FAILED."
     )
 
 
 @mcp.resource("bank://accounts")
-def accounts_resource() -> str:
+async def accounts_resource() -> str:
     """User accounts resource."""
     return (
-        _ledger.list_user_accounts(_session_token)
+        await _ledger.list_user_accounts(_session_token)
         if _ledger and _session_token
         else "ERROR"
     )
 
 
 @mcp.resource("bank://products")
-def products_resource() -> str:
+async def products_resource() -> str:
     """Bank products resource."""
     if not _ledger:
         return "ERROR"
     return "\n".join(
-        f"{p.name}|{p.type}|{p.interest_rate}" for p in _ledger.get_products()
+        f"{p.name}|{p.type}|{p.interest_rate}" for p in await _ledger.get_products()
     )
 
 
 def run_http(host: str = "0.0.0.0", port: int = 8001, username: str = "alice") -> None:
     """Run MCP server with streamable HTTP transport (for Agent Framework)."""
-    db_path = os.getenv("TEST_DB")  # Allow tests to specify database
-    init_context(username, db_path=db_path)
+    init_context(username)
     print(f"MCP Streamable HTTP Server: http://{host}:{port}", file=sys.stderr)
     print(f"User: {username}", file=sys.stderr)
-    if db_path:
-        print(f"Database: {db_path}", file=sys.stderr)
     
     # Use streamable-http transport which works with MCPStreamableHTTPTool
     import uvicorn
@@ -228,8 +236,7 @@ def run_http(host: str = "0.0.0.0", port: int = 8001, username: str = "alice") -
 
 def run_stdio(username: str = "alice") -> None:
     """Run MCP server with stdio transport (for local development)."""
-    db_path = os.getenv("TEST_DB")
-    init_context(username, db_path=db_path)
+    init_context(username)
     print(f"MCP stdio server initialized for: {username}", file=sys.stderr)
     mcp.run()
 

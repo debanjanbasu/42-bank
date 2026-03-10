@@ -72,6 +72,21 @@ export class StorageService {
     await SecureStore.deleteItemAsync(SECURE_KEYS.TOKEN);
     await SecureStore.deleteItemAsync(SECURE_KEYS.REFRESH_TOKEN);
     await SecureStore.deleteItemAsync(SECURE_KEYS.USER);
+    await AsyncStorage.removeItem('token_expires_at');
+  }
+
+  static async setTokenExpiry(expiresAt: string): Promise<void> {
+    await AsyncStorage.setItem('token_expires_at', expiresAt);
+  }
+
+  static async getTokenExpiry(): Promise<string | null> {
+    return AsyncStorage.getItem('token_expires_at');
+  }
+
+  static async isTokenExpired(): Promise<boolean> {
+    const expiresAt = await this.getTokenExpiry();
+    if (!expiresAt) return false; // Unknown — let the server decide
+    return Date.now() > new Date(expiresAt).getTime() - 60_000; // 1 min buffer
   }
 
   static async clearAll(): Promise<void> {

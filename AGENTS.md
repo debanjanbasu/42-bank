@@ -14,36 +14,39 @@ Features 5 specialized agents (Triage, Inquiry, Transaction, Advisor, Manager) a
 
 ---
 
-## Architecture Decision: SQLite vs Cosmos DB
+## Database: Azure Cosmos DB (All Environments)
 
-### Current State (Local Development)
-- **SQLite** is used for local development (`data/bank.db`)
-- Works with `./dev.sh alice` for quick local testing
-- **No external dependencies** required
+All environments — local development, CI, staging, and production — use **Azure Cosmos DB**.
 
-### Production Deployment
-- **Azure Cosmos DB** for production database
-- **Azure Functions MCP Extension** for serverless MCP tools
-- Hybrid approach: SQLite for dev, Cosmos DB for production
+- **Local dev**: Cosmos DB Linux emulator in Docker (`docker-compose up -d`)
+- **Production**: Azure Cosmos DB managed service
 
-### Why Keep SQLite for Development?
-1. **Zero setup**: No Docker, no emulator, no connection strings
-2. **Fast iteration**: Tests run instantly without network latency
-3. **Simple debugging**: SQLite file can be inspected directly
-4. **Isolated tests**: Each test gets its own `test_bank.db`
-
-### Migration Path
 ```bash
-# Local development (default)
-./dev.sh alice                           # Uses SQLite
-
-# Local with Cosmos emulator (optional)
-docker-compose up -d cosmos-emulator
-DB_MODE=cosmos ./dev.sh alice
-
-# Production
-azd up                                   # Deploys to Cosmos DB + Azure Functions
+# Local development (requires Docker Desktop)
+docker-compose up -d        # Start Cosmos emulator
+./dev.sh alice              # Bootstrap DB and start servers
 ```
+
+Docker is **required** for local development. The emulator runs at `https://localhost:8081/`.
+
+### Cosmos Containers
+
+| Container | Partition Key | Description |
+|-----------|--------------|-------------|
+| `users` | `/username` | User accounts, balances, transaction history |
+| `change_feed` | `/event_type` | Audit log (transfers, logins) |
+| `products` | `/type` | Banking product catalog |
+| `auth_devices` | `/user_token` | Registered mobile devices |
+| `key_backups` | `/user_token` | Encrypted key backups |
+| `restore_challenges` | `/backup_id` | Key restore challenges |
+| `token_blacklist` | `/jti` | Revoked JWT tokens |
+
+### Key Modules
+
+- `db/cosmos.py` — Singleton `CosmosClient`, `get_container()`, `get_database()` helpers
+- `ledger.py` — `LedgerEngine` with Cosmos-backed user/balance/transfer operations
+- `api/storage.py` — `APIStorage` with Cosmos-backed device/key/token operations
+- `audit_service.py` — `AuditLogger` writing to `change_feed` container
 
 ---
 
@@ -268,8 +271,7 @@ uv run pytest tests/ -m a2a          # A2A agent tests only
 pyright
 
 # Start development servers
-./dev.sh alice                      # Quick start (SQLite)
-DB_MODE=cosmos ./dev.sh alice       # With Cosmos emulator
+./dev.sh alice                      # Requires Docker Desktop + Cosmos emulator running
 ```
 
 ### Mobile App
@@ -381,7 +383,6 @@ Group imports in this order, alphabetically sorted within each group:
 import asyncio
 import json
 import os
-import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol
@@ -448,10 +449,9 @@ assert is_transaction_successful(text)
 
 ```
 42-bank/
-├── main.py                     # CLI client (deprecated, use mobile)
 ├── a2a_server.py               # A2A server (5 agents, SSE streaming)
 ├── mcp_server.py               # MCP server (9 banking tools)
-├── ledger.py                   # Transaction ledger (SQLite/Pydantic)
+├── ledger.py                   # Transaction ledger (Cosmos DB/Pydantic)
 ├── identity.py                 # ML-DSA-44 cryptography
 ├── bootstrap.py                # Database initialization
 ├── dev.sh                      # Development startup script
@@ -481,8 +481,9 @@ assert is_transaction_successful(text)
 │   ├── test_a2a_agents.py      # Agent tests
 │   └── test_e2e_flow.py        # Integration tests
 │
-└── data/                       # SQLite database
-    └── bank.db
+└── db/                         # Cosmos DB client
+    ├── __init__.py
+    └── cosmos.py               # Singleton client, get_container() helper
 ```
 
 ---
@@ -500,9 +501,9 @@ assert is_transaction_successful(text)
 3. Test: `cd mobile && npm start`
 
 ### Database Changes
-1. Modify schema in `ledger.py` `_init_db()` method
+1. Modify schema in `ledger.py` `_init_db()` method (Cosmos container definitions)
 2. Update Pydantic models
-3. Run `uv run python bootstrap.py` to reinitialize
+3. Run `uv run python bootstrap.py` to reinitialize containers and seed data
 
 ---
 
@@ -510,8 +511,8 @@ assert is_transaction_successful(text)
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `DB_MODE` | Database mode | `sqlite` or `cosmos` |
 | `AZURE_COSMOS_CONNECTION_STRING` | Cosmos DB connection | `AccountEndpoint=...` |
+| `COSMOS_DATABASE` | Cosmos database name | `banking` (default) |
 | `AZURE_AI_PROJECT_ENDPOINT` | Foundry project | `https://42-bank.cognitiveservices.azure.com/` |
 | `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Model deployment | `Qwen3.5-35B-A3B` |
 | `JWT_SECRET` | JWT signing key | (generate with secrets.token_urlsafe) |
@@ -521,8 +522,8 @@ assert is_transaction_successful(text)
 ## Notes
 
 - **Foundry Local must be running** for integration tests
+- **Docker Desktop must be running** with `docker-compose up -d` for Cosmos emulator
 - **Mobile app** is the primary client (CLI deprecated)
 - Tests use ports 8100 (A2A) and 8101 (MCP) to avoid conflicts
-- Test database: `data/test_bank.db` (auto-cleaned)
-- Production database: `data/bank.db`
-- **SQLite for dev, Cosmos DB for production**
+- Each test function uses an isolated Cosmos DB database (deleted on teardown)
+- `data/keys/` is still used by `IdentityManager` for ML-DSA-44 key files

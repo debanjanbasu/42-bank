@@ -18,6 +18,7 @@ Security:
 
 import os
 import hashlib
+import uuid
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -25,18 +26,18 @@ import jwt
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from starlette.requests import Request
 
-from api.deps import get_current_user, validate_token
+from api.deps import get_current_user, validate_token, JWT_SECRET, JWT_ALGORITHM, limiter
 from api.storage import get_api_storage
 from ledger import get_ledger
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
 
 # Configuration
-JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-in-production")
-JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_HOURS = int(os.getenv("JWT_EXPIRY_HOURS", "168"))  # 7 days
 JWT_REFRESH_EXPIRY_DAYS = int(os.getenv("JWT_REFRESH_EXPIRY_DAYS", "30"))
+MAX_DEVICES_PER_USER = int(os.getenv("MAX_DEVICES_PER_USER", "10"))
 
 
 # ============ Request/Response Models ============
@@ -114,6 +115,7 @@ def generate_jwt(user_id: str, username: str, device_id: str, expiry_hours: int 
         "sub": user_id,
         "username": username,
         "device_id": device_id,
+        "jti": str(uuid.uuid4()),
         "iat": datetime.utcnow(),
         "exp": datetime.utcnow() + timedelta(hours=expiry_hours),
         "type": "access"
@@ -127,6 +129,7 @@ def generate_refresh_token(user_id: str, username: str, device_id: str) -> str:
         "sub": user_id,
         "username": username,
         "device_id": device_id,
+        "jti": str(uuid.uuid4()),
         "iat": datetime.utcnow(),
         "exp": datetime.utcnow() + timedelta(days=JWT_REFRESH_EXPIRY_DAYS),
         "type": "refresh"
@@ -139,10 +142,7 @@ def hash_device_id(device_id: str) -> str:
     return hashlib.sha256(device_id.encode()).hexdigest()
 
 
-storage = get_api_storage()
-
-
-def register_device_for_user(
+async def register_device_for_user(
     user_token: str,
     device_id: str,
     device_name: Optional[str],
@@ -150,7 +150,7 @@ def register_device_for_user(
     push_token: Optional[str],
 ) -> None:
     device_hash = hash_device_id(device_id)
-    storage.upsert_device(
+    await get_api_storage().upsert_device(
         user_token=user_token,
         device_id_hash=device_hash,
         device_name=device_name,
@@ -159,15 +159,16 @@ def register_device_for_user(
     )
 
 
-def has_registered_device(user_token: str, device_id: str) -> bool:
+async def has_registered_device(user_token: str, device_id: str) -> bool:
     device_hash = hash_device_id(device_id)
-    return storage.has_device(user_token, device_hash)
+    return await get_api_storage().has_device(user_token, device_hash)
 
 
 # ============ Endpoints ============
 
 @router.post("/register", response_model=RegisterResponse)
-async def register(request: RegisterRequest):
+@limiter.limit("5/minute")
+async def register(request: Request, body: RegisterRequest):
     """
     Register a new user from the mobile app.
     
@@ -185,50 +186,55 @@ async def register(request: RegisterRequest):
     ledger = get_ledger()
     
     # Check if username already exists
-    existing = ledger.get_user_by_username(request.username)
+    existing = await ledger.get_user_by_username(body.username)
     if existing:
-        raise HTTPException(400, f"Username '{request.username}' already exists")
+        raise HTTPException(400, f"Username '{body.username}' already exists")
     
     # Generate user token (internal ID)
-    user_token = f"{request.username}_token_{datetime.now().timestamp()}"
+    user_token = f"{body.username}_token_{datetime.now().timestamp()}"
     
     # Create user in ledger
-    success = ledger.create_user(
+    success = await ledger.create_user(
         token=user_token,
-        username=request.username,
+        username=body.username,
         initial_balance=0.0,  # Start with zero balance
-        public_key=request.public_key
+        public_key=body.public_key
     )
     
     if not success:
         raise HTTPException(500, "Failed to create user")
     
-    register_device_for_user(
+    device_count = await get_api_storage().count_devices(user_token)
+    if device_count >= MAX_DEVICES_PER_USER:
+        raise HTTPException(400, f"Maximum device limit ({MAX_DEVICES_PER_USER}) reached for this account")
+    
+    await register_device_for_user(
         user_token=user_token,
-        device_id=request.device_id,
-        device_name=request.device_name,
-        biometric_enabled=request.biometric_enabled,
-        push_token=request.push_token,
+        device_id=body.device_id,
+        device_name=body.device_name,
+        biometric_enabled=body.biometric_enabled,
+        push_token=body.push_token,
     )
     
     # Generate JWT tokens
-    access_token = generate_jwt(user_token, request.username, request.device_id)
-    refresh_token = generate_refresh_token(user_token, request.username, request.device_id)
+    access_token = generate_jwt(user_token, body.username, body.device_id)
+    refresh_token = generate_refresh_token(user_token, body.username, body.device_id)
     
     expires_at = datetime.utcnow() + timedelta(hours=JWT_EXPIRY_HOURS)
     
     return RegisterResponse(
         user_id=user_token,
-        username=request.username,
+        username=body.username,
         token=access_token,
         refresh_token=refresh_token,
         expires_at=expires_at.isoformat(),
-        public_key=request.public_key
+        public_key=body.public_key
     )
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(request: LoginRequest):
+@limiter.limit("10/minute")
+async def login(request: Request, body: LoginRequest):
     """
     Login from mobile app.
     
@@ -242,19 +248,19 @@ async def login(request: LoginRequest):
     ledger = get_ledger()
     
     # Get user by username
-    user = ledger.get_user_by_username(request.username)
+    user = await ledger.get_user_by_username(body.username)
     if not user:
         raise HTTPException(401, "Invalid credentials")
     
-    if not has_registered_device(user.token, request.device_id):
+    if not await has_registered_device(user.token, body.device_id):
         raise HTTPException(
             401,
             "Device is not registered for this user. Register from a trusted device first.",
         )
     
     # Generate new JWT tokens
-    access_token = generate_jwt(user.token, user.username, request.device_id)
-    refresh_token = generate_refresh_token(user.token, user.username, request.device_id)
+    access_token = generate_jwt(user.token, user.username, body.device_id)
+    refresh_token = generate_refresh_token(user.token, user.username, body.device_id)
     
     expires_at = datetime.utcnow() + timedelta(hours=JWT_EXPIRY_HOURS)
     
@@ -268,7 +274,8 @@ async def login(request: LoginRequest):
 
 
 @router.post("/refresh", response_model=RefreshResponse)
-async def refresh_token(request: RefreshRequest):
+@limiter.limit("20/minute")
+async def refresh_token(request: Request, body: RefreshRequest):
     """
     Refresh access token using refresh token.
     
@@ -276,7 +283,7 @@ async def refresh_token(request: RefreshRequest):
     without requiring user to login again.
     """
     # Validate refresh token
-    payload = validate_token(request.refresh_token, expected_type="refresh")
+    payload = validate_token(body.refresh_token, expected_type="refresh")
     
     # Generate new access token
     new_token = generate_jwt(
@@ -304,7 +311,11 @@ async def register_device(
     Users can have multiple devices (phone, tablet).
     Each device needs to be registered separately.
     """
-    register_device_for_user(
+    device_count = await get_api_storage().count_devices(user["sub"])
+    if device_count >= MAX_DEVICES_PER_USER:
+        raise HTTPException(400, f"Maximum device limit ({MAX_DEVICES_PER_USER}) reached for this account")
+
+    await register_device_for_user(
         user_token=user["sub"],
         device_id=request.device_id,
         device_name=request.device_name,
@@ -332,7 +343,7 @@ async def get_user_info(user: dict = Depends(get_current_user)):
     """
     ledger = get_ledger()
     
-    user_data = ledger.get_user(user["sub"])
+    user_data = await ledger.get_user(user["sub"])
     if not user_data:
         raise HTTPException(404, "User not found")
     
@@ -341,7 +352,7 @@ async def get_user_info(user: dict = Depends(get_current_user)):
         username=user_data.username,
         public_key=user_data.public_key or "",
         created_at=getattr(user_data, "created_at", None),
-        devices=storage.list_devices(user_data.token),
+        devices=await get_api_storage().list_devices(user_data.token),
     )
 
 
@@ -350,11 +361,11 @@ async def logout(user: dict = Depends(get_current_user)):
     """
     Logout user from current device.
     
-    Invalidates the current JWT token.
-    Note: JWT tokens can't be truly invalidated without a blacklist,
-    so this is mainly for client-side cleanup.
+    Adds the current JWT to the blacklist so it cannot be reused.
     """
-    # TODO: Add token to blacklist in production
+    jti = user.get("jti", "")
+    if jti:
+        await get_api_storage().revoke_token(jti, user["sub"])
     return {
         "status": "success",
         "message": "Logged out successfully"

@@ -41,9 +41,7 @@ export interface A2AMessage {
   contextId?: string;
 }
 
-export interface A2AMessagePart {
-  kind: 'text' | 'image' | 'file';
-  text?: string;
-  image_url?: { url: string };
-  file?: { url: string; mime_type: string };
-}
+export type A2AMessagePart =
+  | { kind: 'text'; text: string }
+  | { kind: 'image'; image_url: { url: string } }
+  | { kind: 'file'; file: { url: string; mime_type: string } };

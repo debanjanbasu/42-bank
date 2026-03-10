@@ -1,60 +1,33 @@
 import os
-import sqlite3
+import uuid
 from datetime import datetime
 from typing import Any, Optional
 
+from azure.cosmos import PartitionKey
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
+
+from db.cosmos import get_async_container, get_container, get_database
+
 
 class APIStorage:
-    def __init__(self, db_path: Optional[str] = None) -> None:
-        self.db_path = db_path or os.getenv("API_DB_PATH") or os.getenv("TEST_DB") or os.getenv("BANK_DB_PATH") or "data/bank.db"
-        db_dir = os.path.dirname(self.db_path)
-        if db_dir:
-            os.makedirs(db_dir, exist_ok=True)
+    def __init__(self) -> None:
         self._init_db()
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
-
     def _init_db(self) -> None:
-        with self._connect() as conn:
-            conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS auth_devices (
-                    user_token TEXT NOT NULL,
-                    device_id_hash TEXT NOT NULL,
-                    device_name TEXT,
-                    biometric_enabled INTEGER NOT NULL DEFAULT 1,
-                    push_token TEXT,
-                    registered_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    PRIMARY KEY (user_token, device_id_hash)
-                );
-
-                CREATE TABLE IF NOT EXISTS key_backups (
-                    user_token TEXT PRIMARY KEY,
-                    backup_id TEXT UNIQUE NOT NULL,
-                    encrypted_private_key TEXT NOT NULL,
-                    public_key TEXT NOT NULL,
-                    recovery_key_hash TEXT NOT NULL,
-                    recovery_hint TEXT,
-                    encryption_version TEXT NOT NULL,
-                    timestamp TEXT NOT NULL,
-                    username TEXT
-                );
-
-                CREATE TABLE IF NOT EXISTS restore_challenges (
-                    backup_id TEXT PRIMARY KEY,
-                    nonce TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    expires_at TEXT NOT NULL,
-                    user_token TEXT NOT NULL
-                );
-                """
+        db = get_database()
+        for container_name, partition_path in [
+            ("auth_devices", "/user_token"),
+            ("key_backups", "/user_token"),
+            ("restore_challenges", "/backup_id"),
+            ("token_blacklist", "/jti"),
+        ]:
+            db.create_container_if_not_exists(
+                id=container_name,
+                partition_key=PartitionKey(path=partition_path),
+                offer_throughput=400,
             )
 
-    def upsert_device(
+    async def upsert_device(
         self,
         user_token: str,
         device_id_hash: str,
@@ -63,101 +36,105 @@ class APIStorage:
         push_token: Optional[str],
     ) -> None:
         now = datetime.utcnow().isoformat()
-        with self._connect() as conn:
-            existing = conn.execute(
-                "SELECT registered_at FROM auth_devices WHERE user_token = ? AND device_id_hash = ?",
-                (user_token, device_id_hash),
-            ).fetchone()
-            registered_at = existing["registered_at"] if existing else now
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO auth_devices (
-                    user_token, device_id_hash, device_name, biometric_enabled, push_token, registered_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    user_token,
-                    device_id_hash,
-                    device_name,
-                    1 if biometric_enabled else 0,
-                    push_token,
-                    registered_at,
-                    now,
-                ),
-            )
+        container = get_async_container("auth_devices")
+        doc_id = f"{user_token}#{device_id_hash}"
+        try:
+            existing = await container.read_item(item=doc_id, partition_key=user_token)
+            registered_at = existing.get("registered_at", now)
+        except CosmosResourceNotFoundError:
+            registered_at = now
+        await container.upsert_item({
+            "id": doc_id,
+            "user_token": user_token,
+            "device_id_hash": device_id_hash,
+            "device_name": device_name,
+            "biometric_enabled": biometric_enabled,
+            "push_token": push_token,
+            "registered_at": registered_at,
+            "updated_at": now,
+        })
 
-    def has_device(self, user_token: str, device_id_hash: str) -> bool:
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM auth_devices WHERE user_token = ? AND device_id_hash = ?",
-                (user_token, device_id_hash),
-            ).fetchone()
-            return row is not None
+    async def has_device(self, user_token: str, device_id_hash: str) -> bool:
+        container = get_async_container("auth_devices")
+        try:
+            await container.read_item(item=f"{user_token}#{device_id_hash}", partition_key=user_token)
+            return True
+        except CosmosResourceNotFoundError:
+            return False
 
-    def list_devices(self, user_token: str) -> list[dict[str, Any]]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT device_id_hash, device_name, biometric_enabled, push_token, registered_at, updated_at
-                FROM auth_devices
-                WHERE user_token = ?
-                ORDER BY registered_at ASC
-                """,
-                (user_token,),
-            ).fetchall()
-            return [
-                {
-                    "device_id_hash": row["device_id_hash"],
-                    "device_name": row["device_name"],
-                    "biometric_enabled": bool(row["biometric_enabled"]),
-                    "push_token": row["push_token"],
-                    "registered_at": row["registered_at"],
-                    "updated_at": row["updated_at"],
-                }
-                for row in rows
-            ]
+    async def list_devices(self, user_token: str) -> list[dict[str, Any]]:
+        container = get_async_container("auth_devices")
+        items: list[dict[str, Any]] = []
+        async for item in container.query_items(
+            query="SELECT * FROM c WHERE c.user_token = @t ORDER BY c.registered_at ASC",
+            parameters=[{"name": "@t", "value": user_token}],
+            enable_cross_partition_query=False,
+        ):
+            items.append(item)
+        return [
+            {
+                "device_id_hash": item["device_id_hash"],
+                "device_name": item.get("device_name"),
+                "biometric_enabled": bool(item.get("biometric_enabled", True)),
+                "push_token": item.get("push_token"),
+                "registered_at": item["registered_at"],
+                "updated_at": item["updated_at"],
+            }
+            for item in items
+        ]
 
-    def save_key_backup(self, user_token: str, backup: dict[str, Any]) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO key_backups (
-                    user_token, backup_id, encrypted_private_key, public_key, recovery_key_hash,
-                    recovery_hint, encryption_version, timestamp, username
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    user_token,
-                    backup["backup_id"],
-                    backup["encrypted_private_key"],
-                    backup["public_key"],
-                    backup["recovery_key_hash"],
-                    backup.get("recovery_hint"),
-                    backup["encryption_version"],
-                    backup["timestamp"],
-                    backup.get("username"),
-                ),
-            )
+    async def save_key_backup(self, user_token: str, backup: dict[str, Any]) -> None:
+        await get_async_container("key_backups").upsert_item({
+            "id": backup["backup_id"],
+            "user_token": user_token,
+            "backup_id": backup["backup_id"],
+            "encrypted_private_key": backup["encrypted_private_key"],
+            "public_key": backup["public_key"],
+            "recovery_key_hash": backup["recovery_key_hash"],
+            "recovery_hint": backup.get("recovery_hint"),
+            "encryption_version": backup["encryption_version"],
+            "timestamp": backup["timestamp"],
+            "username": backup.get("username"),
+        })
 
-    def get_key_backup_by_user(self, user_token: str) -> Optional[dict[str, Any]]:
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM key_backups WHERE user_token = ?",
-                (user_token,),
-            ).fetchone()
-            return dict(row) if row else None
+    async def get_key_backup_by_user(self, user_token: str) -> Optional[dict[str, Any]]:
+        container = get_async_container("key_backups")
+        items: list[dict[str, Any]] = []
+        async for item in container.query_items(
+            query="SELECT * FROM c WHERE c.user_token = @t",
+            parameters=[{"name": "@t", "value": user_token}],
+            enable_cross_partition_query=False,
+        ):
+            items.append(item)
+        if not items:
+            return None
+        item = items[0]
+        return {
+            "user_token": item["user_token"],
+            "backup_id": item["backup_id"],
+            "encrypted_private_key": item["encrypted_private_key"],
+            "public_key": item["public_key"],
+            "recovery_key_hash": item["recovery_key_hash"],
+            "recovery_hint": item.get("recovery_hint"),
+            "encryption_version": item["encryption_version"],
+            "timestamp": item["timestamp"],
+            "username": item.get("username"),
+        }
 
-    def delete_key_backup(self, user_token: str) -> None:
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT backup_id FROM key_backups WHERE user_token = ?",
-                (user_token,),
-            ).fetchone()
-            conn.execute("DELETE FROM key_backups WHERE user_token = ?", (user_token,))
-            if row:
-                conn.execute("DELETE FROM restore_challenges WHERE backup_id = ?", (row["backup_id"],))
+    async def delete_key_backup(self, user_token: str) -> None:
+        container = get_async_container("key_backups")
+        items: list[dict[str, Any]] = []
+        async for item in container.query_items(
+            query="SELECT c.id, c.backup_id FROM c WHERE c.user_token = @t",
+            parameters=[{"name": "@t", "value": user_token}],
+            enable_cross_partition_query=False,
+        ):
+            items.append(item)
+        for item in items:
+            await container.delete_item(item=item["id"], partition_key=user_token)
+            await self.delete_challenge(item["backup_id"])
 
-    def save_challenge(
+    async def save_challenge(
         self,
         backup_id: str,
         nonce: str,
@@ -165,26 +142,83 @@ class APIStorage:
         expires_at: str,
     ) -> None:
         now = datetime.utcnow().isoformat()
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO restore_challenges (backup_id, nonce, created_at, expires_at, user_token)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (backup_id, nonce, now, expires_at, user_token),
+        await get_async_container("restore_challenges").upsert_item({
+            "id": backup_id,
+            "backup_id": backup_id,
+            "nonce": nonce,
+            "created_at": now,
+            "expires_at": expires_at,
+            "user_token": user_token,
+        })
+
+    async def get_challenge(self, backup_id: str) -> Optional[dict[str, Any]]:
+        try:
+            item = await get_async_container("restore_challenges").read_item(
+                item=backup_id, partition_key=backup_id
             )
+            return {
+                "backup_id": item["backup_id"],
+                "nonce": item["nonce"],
+                "created_at": item["created_at"],
+                "expires_at": item["expires_at"],
+                "user_token": item["user_token"],
+            }
+        except CosmosResourceNotFoundError:
+            return None
 
-    def get_challenge(self, backup_id: str) -> Optional[dict[str, Any]]:
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM restore_challenges WHERE backup_id = ?",
-                (backup_id,),
-            ).fetchone()
-            return dict(row) if row else None
+    async def delete_challenge(self, backup_id: str) -> None:
+        try:
+            await get_async_container("restore_challenges").delete_item(
+                item=backup_id, partition_key=backup_id
+            )
+        except CosmosResourceNotFoundError:
+            pass
 
-    def delete_challenge(self, backup_id: str) -> None:
-        with self._connect() as conn:
-            conn.execute("DELETE FROM restore_challenges WHERE backup_id = ?", (backup_id,))
+    async def count_devices(self, user_token: str) -> int:
+        container = get_async_container("auth_devices")
+        items: list[Any] = []
+        async for item in container.query_items(
+            query="SELECT VALUE COUNT(1) FROM c WHERE c.user_token = @t",
+            parameters=[{"name": "@t", "value": user_token}],
+            enable_cross_partition_query=False,
+        ):
+            items.append(item)
+        val = items[0] if items else 0
+        return val if isinstance(val, int) else 0
+
+    async def revoke_token(self, jti: str, user_token: str) -> None:
+        now = datetime.utcnow().isoformat()
+        try:
+            await get_async_container("token_blacklist").read_item(item=jti, partition_key=jti)
+        except CosmosResourceNotFoundError:
+            await get_async_container("token_blacklist").upsert_item({
+                "id": jti,
+                "jti": jti,
+                "user_token": user_token,
+                "revoked_at": now,
+            })
+
+    async def is_token_revoked(self, jti: str) -> bool:
+        try:
+            await get_async_container("token_blacklist").read_item(item=jti, partition_key=jti)
+            return True
+        except CosmosResourceNotFoundError:
+            return False
+
+    async def cleanup_expired_tokens(self, before_timestamp: str) -> None:
+        container = get_async_container("token_blacklist")
+        items: list[dict[str, Any]] = []
+        async for item in container.query_items(
+            query="SELECT c.id, c.jti FROM c WHERE c.revoked_at < @ts",
+            parameters=[{"name": "@ts", "value": before_timestamp}],
+            enable_cross_partition_query=True,
+        ):
+            items.append(item)
+        for item in items:
+            try:
+                await container.delete_item(item=item["id"], partition_key=item["jti"])
+            except CosmosResourceNotFoundError:
+                pass
 
 
 _storage_instance: Optional[APIStorage] = None

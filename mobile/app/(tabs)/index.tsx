@@ -4,6 +4,8 @@ import { GiftedChat, IMessage, Send, InputToolbar, Composer } from 'react-native
 import { IconButton, ActivityIndicator } from 'react-native-paper';
 import { useAuth } from '@/contexts/AuthContext';
 import { useA2A } from '@/hooks/useA2A';
+import { useTransactionSigning } from '@/hooks/useTransactionSigning';
+import { TransactionConfirmModal } from '@/components/TransactionConfirmModal';
 import { darkTheme } from '@/utils/theme';
 
 type GiftedChatProps = React.ComponentProps<typeof GiftedChat>;
@@ -11,8 +13,18 @@ type GiftedChatProps = React.ComponentProps<typeof GiftedChat>;
 export default function ChatScreen() {
   const { user } = useAuth();
   const { sendMessage: sendA2AMessage } = useA2A();
+  const { pendingTx, requestSignature, handleConfirm, handleCancel } = useTransactionSigning();
   const [messages, setMessages] = useState<IMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+
+  // Match "send $50 to bob" or "transfer 100 to alice for lunch"
+  const extractTransferIntent = (text: string) => {
+    const match = text.match(
+      /(?:send|transfer)\s+\$?(\d+(?:\.\d+)?)\s+to\s+(\w+)(?:\s+(?:for\s+)?(.+))?/i,
+    );
+    if (!match) return null;
+    return { amount: parseFloat(match[1]), recipient: match[2], note: match[3] ?? 'Transfer' };
+  };
 
   useEffect(() => {
     setMessages([
@@ -35,10 +47,19 @@ export default function ChatScreen() {
         GiftedChat.append(previousMessages, newMessages)
       );
 
+      // Intercept transfer-intent messages and require signing
+      const intent = extractTransferIntent(message.text);
+      let messageText = message.text;
+      if (intent) {
+        const sig = await requestSignature(intent);
+        if (!sig) return; // user cancelled
+        messageText = `${message.text} [sig:${sig.slice(0, 16)}...]`;
+      }
+
       setIsStreaming(true);
       try {
         let fullResponse = '';
-        await sendA2AMessage(message.text, (chunk: string, done: boolean) => {
+        await sendA2AMessage(messageText, (chunk: string, done: boolean) => {
           fullResponse += chunk;
           if (done) {
             const agentMessage: IMessage = {
@@ -72,7 +93,7 @@ export default function ChatScreen() {
         setIsStreaming(false);
       }
     },
-    [sendA2AMessage]
+    [sendA2AMessage, requestSignature],
   );
 
   const renderSend = (props: any) => (
@@ -118,6 +139,14 @@ export default function ChatScreen() {
         messagesContainerStyle={styles.messagesContainer}
       />
       {Platform.OS === 'android' && <KeyboardAvoidingView behavior="padding" />}
+      <TransactionConfirmModal
+        visible={!!pendingTx}
+        recipient={pendingTx?.recipient ?? ''}
+        amount={pendingTx?.amount ?? 0}
+        note={pendingTx?.note ?? ''}
+        onConfirm={handleConfirm}
+        onCancel={handleCancel}
+      />
     </View>
   );
 }

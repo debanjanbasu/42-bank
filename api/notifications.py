@@ -361,31 +361,36 @@ async def send_notification(
 @router.get("/history", response_model=NotificationHistory)
 async def get_notification_history(
     limit: int = 50,
+    offset: int = 0,
     user: dict = Depends(get_current_user)
 ):
     """
     Get notification history for current user.
-    
-    Returns list of recent notifications sent to this user.
+
+    Returns paginated list of notifications sent to this user.
+    Use `limit` and `offset` for pagination.
     """
     user_token = user["sub"]
-    
+
     # Filter history for this user
     user_notifications = [
         {**notif, "id": notif_id}
         for notif_id, notif in _notification_history.items()
         if notif["user_id"] == user_token
     ]
-    
+
     # Sort by sent_at descending
     user_notifications.sort(
         key=lambda x: x.get("sent_at", ""),
         reverse=True
     )
-    
+
+    total = len(user_notifications)
+    page = user_notifications[offset : offset + limit]
+
     return NotificationHistory(
-        notifications=user_notifications[:limit],
-        total=len(user_notifications),
+        notifications=page,
+        total=total,
     )
 
 

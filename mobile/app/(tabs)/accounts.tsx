@@ -4,8 +4,9 @@ import { Text, Card, ActivityIndicator, IconButton } from 'react-native-paper';
 import { ScrollView } from 'react-native-gesture-handler';
 import { useAuth } from '@/contexts/AuthContext';
 import { darkTheme } from '@/utils/theme';
-import { API_URL } from '@/config/env';
 import { Account } from '@/types';
+import { APIClient } from '@/services/APIClient';
+import { CacheService } from '@/services/CacheService';
 
 export default function AccountsScreen() {
   const { user } = useAuth();
@@ -17,29 +18,35 @@ export default function AccountsScreen() {
   const fetchAccounts = useCallback(async () => {
     try {
       setError(null);
-      const response = await fetch(`${API_URL}/api/accounts`, {
-        headers: {
-          Authorization: `Bearer ${await getStoredToken()}`,
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch accounts');
-      }
-
-      const data = await response.json();
-      setAccounts(data.accounts || []);
+      const data = await APIClient.get<{ accounts: Account[] }>('/api/accounts');
+      setAccounts(data.accounts ?? []);
+      await CacheService.setAccounts(data.accounts ?? []); // update cache
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load accounts');
+      // Network error — try cache
+      const cached = await CacheService.getAccounts();
+      if (cached) {
+        setAccounts(cached);
+        setError('Showing cached data (offline)');
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to load accounts');
+      }
     } finally {
       setIsLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, []); // stable — APIClient has no external deps
 
   useEffect(() => {
-    fetchAccounts();
-  }, [fetchAccounts]);
+    const loadWithCache = async () => {
+      const cached = await CacheService.getAccounts();
+      if (cached) {
+        setAccounts(cached);
+        setIsLoading(false);
+      }
+      fetchAccounts(); // still fetch fresh in background
+    };
+    loadWithCache();
+  }, []); // no fetchAccounts dep — intentional
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -66,18 +73,36 @@ export default function AccountsScreen() {
         />
       }
     >
-      {error ? (
+      {error && accounts.length === 0 ? (
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>{error}</Text>
-          <IconButton icon="refresh" onPress={fetchAccounts} />
+          <IconButton
+            icon="refresh"
+            onPress={fetchAccounts}
+            accessible={true}
+            accessibilityLabel="Retry loading accounts"
+            accessibilityHint="Tap to retry fetching your accounts"
+          />
         </View>
       ) : accounts.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyText}>No accounts found</Text>
         </View>
       ) : (
-        accounts.map((account) => (
-          <Card key={account.type} style={styles.card}>
+        <>
+          {error ? (
+            <View style={styles.offlineBanner}>
+              <Text style={styles.offlineBannerText}>{error}</Text>
+            </View>
+          ) : null}
+          {accounts.map((account) => (
+          <Card
+            key={account.type + (account.account_number ?? '')}
+            style={styles.card}
+            accessible={true}
+            accessibilityLabel={`${account.type} account`}
+            accessibilityHint={`Balance: $${account.balance.toFixed(2)}`}
+          >
             <Card.Content>
               <View style={styles.cardHeader}>
                 <Text style={styles.accountType}>
@@ -87,6 +112,7 @@ export default function AccountsScreen() {
                   icon={account.type === 'checking' ? 'checkbook' : 'piggy-bank'}
                   size={24}
                   iconColor={darkTheme.colors.primary}
+                  accessibilityLabel={`${account.type} account icon`}
                 />
               </View>
               <Text style={styles.balance}>
@@ -97,15 +123,11 @@ export default function AccountsScreen() {
               </Text>
             </Card.Content>
           </Card>
-        ))
+        ))}
+        </>
       )}
     </ScrollView>
   );
-}
-
-async function getStoredToken(): Promise<string | null> {
-  const { StorageService } = await import('@/services/StorageService');
-  return StorageService.getToken();
 }
 
 const styles = StyleSheet.create({
@@ -163,4 +185,16 @@ const styles = StyleSheet.create({
     color: darkTheme.colors.textSecondary,
     fontSize: 16,
   },
+  offlineBanner: {
+    backgroundColor: darkTheme.colors.surfaceVariant,
+    padding: 8,
+    borderRadius: 8,
+    marginBottom: 12,
+    alignItems: 'center',
+  },
+  offlineBannerText: {
+    color: darkTheme.colors.onSurfaceVariant,
+    fontSize: 13,
+  },
 });
+

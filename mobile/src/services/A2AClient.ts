@@ -20,6 +20,7 @@
  */
 
 import { EventSourcePolyfill } from 'event-source-polyfill';
+import { A2AMessagePart } from '@/types';
 
 // ============ Types ============
 
@@ -29,12 +30,7 @@ export interface A2AMessage {
   contextId?: string;
 }
 
-export interface A2AMessagePart {
-  kind: 'text' | 'image' | 'file';
-  text?: string;
-  image_url?: { url: string };
-  file?: { url: string; mime_type: string };
-}
+export type { A2AMessagePart };
 
 export interface A2AResponse {
   result: {
@@ -272,14 +268,11 @@ export class A2AClient {
   /**
    * Extract text from A2A response
    */
-  private extractTextFromResponse(response: any): string {
-    if (response.result?.parts) {
-      return response.result.parts
-        .filter((p: any) => p.kind === 'text')
-        .map((p: any) => p.text)
-        .join('');
-    }
-    return '';
+  private extractTextFromResponse(response: { result?: { parts?: A2AMessagePart[] } }): string {
+    return (response.result?.parts ?? [])
+      .filter((p): p is Extract<A2AMessagePart, { kind: 'text' }> => p.kind === 'text')
+      .map(p => p.text)
+      .join('');
   }
 
   /**
@@ -370,8 +363,8 @@ export async function sendBankingQuery(
   } else {
     const response = await client.sendMessage('triage', query);
     return response.result.parts
-      .filter(p => p.kind === 'text')
-      .map(p => p.text || '')
+      .filter((p): p is Extract<A2AMessagePart, { kind: 'text' }> => p.kind === 'text')
+      .map(p => p.text)
       .join('');
   }
 }

@@ -272,7 +272,7 @@ Seed the database with initial users and products.
 export AZURE_COSMOS_CONNECTION_STRING="AccountEndpoint=...;AccountKey=..."
 
 # Run initialization
-uv run python scripts/init-cosmos-local.py
+uv run python bootstrap.py
 ```
 
 ### 5.2 Verify Data
@@ -296,22 +296,12 @@ az cosmosdb sql query \
 
 ```bash
 # Start emulator
-docker-compose up -d cosmos-emulator
-
-# Wait for startup (30s)
-sleep 30
+docker-compose up -d
 
 # Initialize database
-uv run python scripts/init-cosmos-local.py
+uv run python bootstrap.py
 
-# Run with Cosmos
-DB_MODE=cosmos ./dev.sh alice
-```
-
-### Using SQLite (Default)
-
-```bash
-# No Docker required
+# Run dev servers
 ./dev.sh alice
 ```
 
@@ -376,7 +366,8 @@ az monitor app-insights metrics show \
 
 ### Network Security
 
-- All endpoints HTTPS only
+- All endpoints HTTPS only (TLS terminated at Azure Front Door / App Service ingress)
+- `SSL_CERT_FILE` / `SSL_KEY_FILE` env vars are **only** needed when running a standalone VM without a TLS-terminating proxy
 - CORS configured for banking app
 - Cosmos DB: Virtual network firewall
 - Key Vault: RBAC enabled
@@ -427,6 +418,40 @@ az containerapp logs show \
 5. ✅ Create Foundry agents
 6. ✅ Test end-to-end flow
 7. ✅ Configure monitoring
+
+---
+
+## Disaster Recovery
+
+### RPO / RTO
+- **RPO (Recovery Point Objective):** 15 minutes (Cosmos DB Continuous Backup)
+- **RTO (Recovery Time Objective):** 1 hour
+
+### Backup Configuration
+Cosmos DB is configured with Continuous Backup mode. Backups are retained for 30 days.
+
+### Restore Procedure
+1. Navigate to Azure Portal → Cosmos DB account
+2. Select **Point in Time Restore** under Backups
+3. Choose target timestamp and resource group
+4. Create restore target account
+5. Update `AZURE_COSMOS_CONNECTION_STRING` in Key Vault with new account endpoint
+6. Restart Container Apps to pick up new connection string
+
+### Monthly Restore Test
+Run monthly to validate backup integrity:
+```bash
+# Restore to a test resource group
+az cosmosdb restore \
+  --account-name 42bank-cosmos-prod \
+  --target-database-account-name 42bank-cosmos-restore-test \
+  --restore-timestamp "$(date -u -v-7d '+%Y-%m-%dT%H:%M:%SZ')" \
+  --resource-group 42-bank-rg-test \
+  --location eastus
+```
+
+### Contact
+For disaster recovery incidents, follow your organization's incident response playbook.
 
 ---
 

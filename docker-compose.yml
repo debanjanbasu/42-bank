@@ -1,14 +1,16 @@
 # Docker Compose for 42-Bank local development
-# Starts Cosmos DB emulator for production parity testing
+#
+# Docker is required for local development (Cosmos DB emulator).
 #
 # Usage:
-#   docker-compose up -d                    # Start Cosmos emulator
-#   DB_MODE=cosmos ./dev.sh alice          # Run with Cosmos
-#   docker-compose down                     # Stop all
+#   docker-compose up -d              # Start Cosmos emulator (required)
+#   ./dev.sh alice                    # Run backend (emulator must be up)
+#   docker-compose down               # Stop all
 #
 # Services:
-#   - cosmos-emulator: Azure Cosmos DB emulator (vNext Linux)
-#   - cosmos-mcp: Cosmos DB MCP Toolkit (optional, for MCP tool testing)
+#   - cosmos-emulator: Azure Cosmos DB emulator (required for all dev)
+#   - cosmos-mcp: Cosmos DB MCP Toolkit (optional, profile: mcp-toolkit)
+#   - banking-mcp: Custom banking MCP server (optional, profile: banking-tools)
 #
 # Requirements:
 #   - Docker Desktop installed and running

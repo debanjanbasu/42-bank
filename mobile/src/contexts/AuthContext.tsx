@@ -5,8 +5,11 @@ import React, {
   useEffect,
   useCallback,
 } from 'react';
+import { AppState, AppStateStatus } from 'react-native';
 import { User } from '@/types';
 import { AuthService } from '@/services/AuthService';
+import { CacheService } from '@/services/CacheService';
+import { NotificationService } from '@/services/NotificationService';
 import { StorageService } from '@/services/StorageService';
 import { KeyManager } from '@/services/KeyManager';
 
@@ -22,9 +25,14 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const SESSION_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  const lastActiveRef = React.useRef<number>(Date.now());
+  const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     checkExistingSession();
@@ -35,17 +43,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const storedUser = await StorageService.getUser();
       const token = await StorageService.getToken();
       if (storedUser && token) {
-        const isValid = await AuthService.verifyToken(token);
-        if (isValid) {
-          setUser(storedUser);
-        } else {
+        const expired = await StorageService.isTokenExpired();
+        if (expired) {
           const refreshToken = await StorageService.getRefreshToken();
           if (refreshToken) {
-            const newToken = await AuthService.refreshToken(refreshToken);
-            await StorageService.setToken(newToken);
-            setUser(storedUser);
+            try {
+              const newToken = await AuthService.refreshToken(refreshToken);
+              const isNewTokenValid = await AuthService.verifyToken(newToken);
+              if (!isNewTokenValid) {
+                await clearAuth();
+                return;
+              }
+              await StorageService.setToken(newToken);
+              setUser(storedUser);
+            } catch {
+              await clearAuth();
+              return;
+            }
           } else {
             await clearAuth();
+            return;
+          }
+        } else {
+          const isValid = await AuthService.verifyToken(token);
+          if (isValid) {
+            setUser(storedUser);
+          } else {
+            const refreshToken = await StorageService.getRefreshToken();
+            if (refreshToken) {
+              try {
+                const newToken = await AuthService.refreshToken(refreshToken);
+                const isNewTokenValid = await AuthService.verifyToken(newToken);
+                if (!isNewTokenValid) {
+                  await clearAuth();
+                  return;
+                }
+                await StorageService.setToken(newToken);
+                setUser(storedUser);
+              } catch {
+                await clearAuth();
+              }
+            } else {
+              await clearAuth();
+            }
           }
         }
       }
@@ -62,6 +102,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
   };
 
+  const resetSessionTimer = useCallback(() => {
+    lastActiveRef.current = Date.now();
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    if (user) {
+      timeoutRef.current = setTimeout(() => {
+        clearAuth();
+      }, SESSION_TIMEOUT_MS);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state: AppStateStatus) => {
+      if (state === 'active') {
+        const elapsed = Date.now() - lastActiveRef.current;
+        if (elapsed > SESSION_TIMEOUT_MS && user) {
+          clearAuth();
+        } else {
+          resetSessionTimer();
+        }
+      } else if (state === 'background') {
+        lastActiveRef.current = Date.now();
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      }
+    });
+    return () => {
+      subscription.remove();
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, [user, resetSessionTimer]);
+
   const login = useCallback(async (username: string) => {
     setIsLoading(true);
     try {
@@ -69,8 +139,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const response = await AuthService.login(username, deviceId);
       await StorageService.setUser(response.user);
       await StorageService.setToken(response.token);
+      await StorageService.setTokenExpiry(response.expires_at);
       await StorageService.setRefreshToken(response.refresh_token);
       setUser(response.user);
+      try {
+        const pushToken = await NotificationService.registerForPushNotifications();
+        if (pushToken) {
+          await NotificationService.registerTokenWithServer(pushToken);
+        }
+      } catch (e) {
+        // Non-fatal — app works without push notifications
+        console.warn('Push notification setup failed:', e);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -91,8 +171,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       await StorageService.setUser(response.user);
       await StorageService.setToken(response.token);
+      await StorageService.setTokenExpiry(response.expires_at);
       await StorageService.setRefreshToken(response.refresh_token);
       setUser(response.user);
+      try {
+        const pushToken = await NotificationService.registerForPushNotifications();
+        if (pushToken) {
+          await NotificationService.registerTokenWithServer(pushToken);
+        }
+      } catch (e) {
+        // Non-fatal — app works without push notifications
+        console.warn('Push notification setup failed:', e);
+      }
     } catch (error) {
       // Roll back generated keys when registration fails server-side.
       if (generatedKeys) {
@@ -108,6 +198,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsLoading(true);
     try {
       await KeyManager.deleteKeys();
+      await CacheService.clearAll();
       await clearAuth();
     } finally {
       setIsLoading(false);

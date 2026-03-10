@@ -34,6 +34,9 @@ param storageAccountName string = '42bankstorage${uniqueString(subscription().id
 @description('Container Apps environment name')
 param containerAppsEnvName string = '42bank-env'
 
+@description('Enable public network access for Key Vault (disable in production)')
+param keyVaultPublicNetworkAccess string = 'Enabled'
+
 // Variables
 var resourceGroupName = '42-bank'
 var databaseName = 'banking'
@@ -55,7 +58,7 @@ resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2023-11-15' = {
     databaseAccountOfferType: 'Standard'
     enableAutomaticFailover: false
     enableMultipleWriteLocations: false
-    isVirtualNetworkFilterEnabled: false
+    isVirtualNetworkFilterEnabled: true
     consistencyPolicy: {
       defaultConsistencyLevel: 'Session'
       maxIntervalInSeconds: 5
@@ -209,10 +212,13 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     enableSoftDelete: true
     enablePurgeProtection: true
     enableRbacAuthorization: true
-    publicNetworkAccess: 'Enabled'
+    // Set keyVaultPublicNetworkAccess param to 'Disabled' in production for hardened security
+    publicNetworkAccess: keyVaultPublicNetworkAccess
     networkAcls: {
       bypass: 'AzureServices'
-      defaultAction: 'Allow'
+      defaultAction: 'Deny'
+      ipRules: []
+      virtualNetworkRules: []
     }
   }
   tags: {
@@ -280,7 +286,8 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
     sku: {
       name: 'PerGB2018'
     }
-    retentionInDays: 30
+    retentionInDays: 90
+    // Ingestion must remain Enabled so agents and Container Apps can write logs
     publicNetworkAccessForIngestion: 'Enabled'
     publicNetworkAccessForQuery: 'Enabled'
   }
@@ -299,6 +306,7 @@ resource insights 'Microsoft.Insights/components@2020-02-02' = {
   properties: {
     Application_Type: 'web'
     WorkspaceResourceId: logAnalytics.id
+    // Ingestion must remain Enabled so Application Insights SDK can send telemetry
     publicNetworkAccessForIngestion: 'Enabled'
     publicNetworkAccessForQuery: 'Enabled'
   }

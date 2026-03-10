@@ -38,17 +38,14 @@ from azure.identity.aio import DefaultAzureCredential
 from azure.core.credentials import AccessToken
 
 from dotenv import load_dotenv
-from utils import create_chat_client
+from utils import create_chat_client, create_chat_client_async
 from mcp_client import get_banking_mcp_tools
 from bank_agents import triage, transaction, inquiry, advisor, manager
 from identity import IdentityManager
 from ledger import LedgerEngine
+from api.deps import JWT_SECRET, JWT_ALGORITHM
 
 load_dotenv()
-
-# JWT configuration for mobile app authentication
-JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-in-production")
-JWT_ALGORITHM = "HS256"
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -59,7 +56,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
     - Key-based: x-api-key header
     - Microsoft Entra ID: Bearer token (optional validation)
     - JWT: Mobile app JWT token validation
-    - Unauthenticated: Allowed in development mode
+    - Unauthenticated: Allowed only in development/local/test environments.
+      In production/staging, authentication is always required regardless of
+      the require_auth parameter.
     """
 
     def __init__(self, app, api_key: Optional[str] = None, require_auth: bool = False):
@@ -453,7 +452,7 @@ class A2AAgentHandler:
             }
 
 
-def create_a2a_app(
+async def create_a2a_app(
     ledger: LedgerEngine,
     identity: IdentityManager,
     username: str,
@@ -467,7 +466,7 @@ def create_a2a_app(
     port: int = 8000,
 ) -> Starlette:
     """Create A2A server application with MCP tool integration."""
-    client = create_chat_client(mode, model_name)
+    client = await create_chat_client_async(mode, model_name)
 
     # Get MCP tools from the MCP server
     # MCPStreamableHTTPTool auto-discovers all tools from the server
@@ -576,9 +575,12 @@ def create_a2a_app(
         ]
     )
 
+    _require_auth = os.getenv("APP_ENV", "development").lower() not in (
+        "development", "dev", "local", "test"
+    )
     middleware = (
-        [Middleware(AuthMiddleware, api_key=api_key, require_auth=require_auth)]
-        if api_key or require_auth
+        [Middleware(AuthMiddleware, api_key=api_key, require_auth=require_auth or _require_auth)]
+        if api_key or require_auth or _require_auth
         else []
     )
 
@@ -624,9 +626,9 @@ async def run_a2a_server(
 
     pk = ident.get_public_key(username)
     if pk:
-        ledger.register_user(token, username, pk.hex())
+        await ledger.register_user(token, username, pk.hex())
 
-    app = create_a2a_app(
+    app = await create_a2a_app(
         ledger,
         ident,
         username,
@@ -647,7 +649,21 @@ async def run_a2a_server(
     for key in ["triage", "transaction", "inquiry", "advisor", "manager"]:
         print(f"  /a2a/{key}")
 
-    await uvicorn.Server(uvicorn.Config(app, host=host, port=port)).serve()
+    ssl_certfile: Optional[str] = None
+    ssl_keyfile: Optional[str] = None
+    if os.getenv("APP_ENV") == "production":
+        ssl_certfile = os.getenv("SSL_CERT_FILE") or None
+        ssl_keyfile = os.getenv("SSL_KEY_FILE") or None
+
+    await uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host=host,
+            port=port,
+            ssl_certfile=ssl_certfile,
+            ssl_keyfile=ssl_keyfile,
+        )
+    ).serve()
 
 
 if __name__ == "__main__":

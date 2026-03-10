@@ -39,7 +39,7 @@ export function useBiometric() {
         const result = await LocalAuthentication.authenticateAsync({
           promptMessage: promptMessage || 'Authenticate to continue',
           cancelLabel: 'Cancel',
-          disableDeviceFallback: false,
+          disableDeviceFallback: true,
         });
 
         return result.success;
@@ -57,4 +57,21 @@ export function useBiometric() {
     biometricType,
     authenticate,
   };
+}
+
+export async function authenticateForTransaction(description: string): Promise<boolean> {
+  const compatible = await LocalAuthentication.hasHardwareAsync();
+  const enrolled = await LocalAuthentication.isEnrolledAsync();
+  if (!compatible || !enrolled) return false;
+
+  try {
+    const result = await LocalAuthentication.authenticateAsync({
+      promptMessage: description,
+      cancelLabel: 'Cancel',
+      disableDeviceFallback: true,
+    });
+    return result.success;
+  } catch {
+    return false;
+  }
 }

@@ -3,8 +3,9 @@ import { View, StyleSheet, FlatList } from 'react-native';
 import { Text, ActivityIndicator, IconButton } from 'react-native-paper';
 import { useAuth } from '@/contexts/AuthContext';
 import { darkTheme } from '@/utils/theme';
-import { API_URL } from '@/config/env';
 import { Transaction } from '@/types';
+import { APIClient } from '@/services/APIClient';
+import { CacheService } from '@/services/CacheService';
 
 export default function TransactionsScreen() {
   const { user } = useAuth();
@@ -15,41 +16,52 @@ export default function TransactionsScreen() {
   const fetchTransactions = useCallback(async () => {
     try {
       setError(null);
-      const response = await fetch(`${API_URL}/api/transactions`, {
-        headers: {
-          Authorization: `Bearer ${await getStoredToken()}`,
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch transactions');
-      }
-
-      const data = await response.json();
-      setTransactions(data.transactions || []);
+      const data = await APIClient.get<{ transactions: Transaction[] }>('/api/transactions');
+      setTransactions(data.transactions ?? []);
+      await CacheService.setTransactions(data.transactions ?? []); // update cache
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load transactions');
+      // Network error — try cache
+      const cached = await CacheService.getTransactions();
+      if (cached) {
+        setTransactions(cached);
+        setError('Showing cached data (offline)');
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to load transactions');
+      }
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, []); // stable — APIClient has no external deps
 
   useEffect(() => {
-    fetchTransactions();
-  }, [fetchTransactions]);
+    const loadWithCache = async () => {
+      const cached = await CacheService.getTransactions();
+      if (cached) {
+        setTransactions(cached);
+        setIsLoading(false);
+      }
+      fetchTransactions(); // still fetch fresh in background
+    };
+    loadWithCache();
+  }, []); // no fetchTransactions dep — intentional
 
   const renderTransaction = ({ item }: { item: Transaction }) => {
     const isSent = item.sender === user?.username;
-    const amount = isSent ? -item.amount : item.amount;
     const otherParty = isSent ? item.recipient : item.sender;
 
     return (
-      <View style={styles.transactionItem}>
+      <View
+        style={styles.transactionItem}
+        accessible={true}
+        accessibilityLabel={`${isSent ? 'Sent to' : 'Received from'} ${otherParty ?? 'Unknown'}`}
+        accessibilityHint={`Amount: $${Math.abs(item.amount).toFixed(2)}, Status: ${item.status}`}
+      >
         <View style={styles.transactionIcon}>
           <IconButton
             icon={isSent ? 'arrow-up-circle' : 'arrow-down-circle'}
             size={32}
             iconColor={isSent ? darkTheme.colors.error : darkTheme.colors.success}
+            accessibilityLabel={isSent ? 'Outgoing transaction' : 'Incoming transaction'}
           />
         </View>
         <View style={styles.transactionDetails}>
@@ -85,21 +97,33 @@ export default function TransactionsScreen() {
     );
   }
 
-  if (error) {
+  // Hard error with no cached data to show
+  if (error && transactions.length === 0) {
     return (
       <View style={styles.errorContainer}>
         <Text style={styles.errorText}>{error}</Text>
-        <IconButton icon="refresh" onPress={fetchTransactions} />
+        <IconButton
+          icon="refresh"
+          onPress={fetchTransactions}
+          accessible={true}
+          accessibilityLabel="Retry loading transactions"
+          accessibilityHint="Tap to retry fetching your transactions"
+        />
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
+      {error ? (
+        <View style={styles.offlineBanner}>
+          <Text style={styles.offlineBannerText}>{error}</Text>
+        </View>
+      ) : null}
       <FlatList
         data={transactions}
         renderItem={renderTransaction}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => item.id + item.timestamp}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyText}>No transactions yet</Text>
@@ -109,11 +133,6 @@ export default function TransactionsScreen() {
       />
     </View>
   );
-}
-
-async function getStoredToken(): Promise<string | null> {
-  const { StorageService } = await import('@/services/StorageService');
-  return StorageService.getToken();
 }
 
 const styles = StyleSheet.create({
@@ -186,4 +205,14 @@ const styles = StyleSheet.create({
     color: darkTheme.colors.textSecondary,
     fontSize: 16,
   },
+  offlineBanner: {
+    backgroundColor: darkTheme.colors.surfaceVariant,
+    padding: 8,
+    alignItems: 'center',
+  },
+  offlineBannerText: {
+    color: darkTheme.colors.onSurfaceVariant,
+    fontSize: 13,
+  },
 });
+

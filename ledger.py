@@ -1,10 +1,23 @@
+import asyncio
 import hashlib
 import os
-import sqlite3
 from datetime import datetime
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
+from azure.core import MatchConditions
+from azure.core.exceptions import ResourceModifiedError
+from azure.cosmos import PartitionKey
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from pydantic import BaseModel, Field
+
+from audit_service import AuditLogger
+from db.cosmos import get_async_container, get_container, get_database
+
+
+class AccountType(str, Enum):
+    CHECKING = "checking"
+    SAVINGS = "savings"
 
 
 class Transaction(BaseModel):
@@ -13,7 +26,7 @@ class Transaction(BaseModel):
     recipient: str
     amount: float
     description: str
-    account_type: str = "checking"
+    account_type: str = AccountType.CHECKING
 
 
 class AccountData(BaseModel):
@@ -27,8 +40,8 @@ class UserAccount(BaseModel):
     public_key: Optional[str] = None
     accounts: Dict[str, AccountData] = Field(
         default_factory=lambda: {
-            "checking": AccountData(balance=0.0),
-            "savings": AccountData(balance=0.0),
+            AccountType.CHECKING: AccountData(balance=0.0),
+            AccountType.SAVINGS: AccountData(balance=0.0),
         }
     )
     pending_requests: List[Dict[str, Any]] = Field(default_factory=list)
@@ -42,114 +55,109 @@ class Product(BaseModel):
     description: str
 
 
+_SEED_PRODUCTS = [
+    {"id": "p0", "name": "Standard Checking", "type": "checking", "interest_rate": 0.0, "description": "Default everyday account."},
+    {"id": "p1", "name": "High-Yield Savings", "type": "saving", "interest_rate": 4.5, "description": "Earn 4.5% interest."},
+    {"id": "p2", "name": "Home Mortgage", "type": "mortgage", "interest_rate": 3.8, "description": "30-year fixed rate."},
+    {"id": "p3", "name": "Express Auto Loan", "type": "loan", "interest_rate": 5.9, "description": "Instant car financing."},
+    {"id": "p4", "name": "Infinite Rewards Card", "type": "credit_card", "interest_rate": 15.4, "description": "2% cashback."},
+]
+
+
 class LedgerEngine:
-    def __init__(self, db_path: str = "data/bank.db") -> None:
-        self.db_path = db_path
-        db_dir = os.path.dirname(self.db_path)
-        if db_dir:
-            os.makedirs(db_dir, exist_ok=True)
+    def __init__(self) -> None:
+        self._audit = AuditLogger()
         self._init_db()
 
     def _init_db(self) -> None:
-        with sqlite3.connect(self.db_path) as conn:
-            conn.executescript("""
-                CREATE TABLE IF NOT EXISTS users (
-                    token TEXT PRIMARY KEY,
-                    username TEXT UNIQUE COLLATE NOCASE,
-                    data TEXT
-                );
-                CREATE TABLE IF NOT EXISTS change_feed (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    event_type TEXT,
-                    payload TEXT,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-                );
-                CREATE TABLE IF NOT EXISTS products (
-                    id TEXT PRIMARY KEY,
-                    name TEXT,
-                    type TEXT,
-                    interest_rate REAL,
-                    description TEXT
-                );
-            """)
-            if not conn.execute("SELECT 1 FROM products LIMIT 1").fetchone():
-                products = [
-                    (
-                        "p0",
-                        "Standard Checking",
-                        "checking",
-                        0.0,
-                        "Default everyday account.",
-                    ),
-                    ("p1", "High-Yield Savings", "saving", 4.5, "Earn 4.5% interest."),
-                    ("p2", "Home Mortgage", "mortgage", 3.8, "30-year fixed rate."),
-                    ("p3", "Express Auto Loan", "loan", 5.9, "Instant car financing."),
-                    (
-                        "p4",
-                        "Infinite Rewards Card",
-                        "credit_card",
-                        15.4,
-                        "2% cashback.",
-                    ),
-                ]
-                conn.executemany(
-                    "INSERT INTO products VALUES (?, ?, ?, ?, ?)", products
-                )
+        db = get_database()
+        for container_name, partition_path in [
+            ("users", "/username"),
+            ("change_feed", "/event_type"),
+            ("products", "/type"),
+        ]:
+            db.create_container_if_not_exists(
+                id=container_name,
+                partition_key=PartitionKey(path=partition_path),
+                offer_throughput=400,
+            )
+
+        products_c = get_container("products")
+        try:
+            products_c.read_item(item="p0", partition_key="checking")
+        except CosmosResourceNotFoundError:
+            for product in _SEED_PRODUCTS:
+                products_c.upsert_item(product)
 
     @staticmethod
-    def _row_to_user(row: Optional[sqlite3.Row | tuple[str]]) -> Optional[UserAccount]:
-        if not row:
-            return None
-        raw = row[0] if isinstance(row, tuple) else row["data"]
-        return UserAccount.model_validate_json(raw)
+    def _doc_to_user(doc: Dict[str, Any]) -> UserAccount:
+        return UserAccount.model_validate({
+            "token": doc["id"],
+            "username": doc["username"],
+            "public_key": doc.get("public_key"),
+            "accounts": doc.get("accounts", {}),
+            "pending_requests": doc.get("pending_requests", []),
+        })
 
-    def _get_user_from_conn(self, token: str, conn: sqlite3.Connection) -> Optional[UserAccount]:
-        row = conn.execute("SELECT data FROM users WHERE token = ?", (token,)).fetchone()
-        return self._row_to_user(row)
+    @staticmethod
+    def _user_to_doc(user: UserAccount) -> Dict[str, Any]:
+        return {
+            "id": user.token,
+            "username": user.username,
+            "public_key": user.public_key,
+            "accounts": user.model_dump()["accounts"],
+            "pending_requests": user.pending_requests,
+        }
 
-    def _get_user(self, token: str) -> Optional[UserAccount]:
+    async def _get_user(self, token: str) -> Optional[UserAccount]:
         if not token:
             return None
-        with sqlite3.connect(self.db_path) as conn:
-            return self._get_user_from_conn(token, conn)
+        container = get_async_container("users")
+        items: list[Dict[str, Any]] = []
+        async for item in container.query_items(
+            query="SELECT * FROM c WHERE c.id = @token",
+            parameters=[{"name": "@token", "value": token}],
+            enable_cross_partition_query=True,
+        ):
+            items.append(item)
+        return self._doc_to_user(items[0]) if items else None
 
-    def get_user(self, token: str) -> Optional[UserAccount]:
-        return self._get_user(token)
+    async def _get_user_doc(self, token: str) -> Optional[Dict[str, Any]]:
+        """Return raw Cosmos document (includes _etag) for the given token."""
+        if not token:
+            return None
+        container = get_async_container("users")
+        items: list[Dict[str, Any]] = []
+        async for item in container.query_items(
+            query="SELECT * FROM c WHERE c.id = @token",
+            parameters=[{"name": "@token", "value": token}],
+            enable_cross_partition_query=True,
+        ):
+            items.append(item)
+        return items[0] if items else None
 
-    def get_user_by_username(self, username: str) -> Optional[UserAccount]:
+    async def get_user(self, token: str) -> Optional[UserAccount]:
+        return await self._get_user(token)
+
+    async def get_user_by_username(self, username: str) -> Optional[UserAccount]:
         if not username:
             return None
-        with sqlite3.connect(self.db_path) as conn:
-            row = conn.execute(
-                "SELECT data FROM users WHERE username = ?", (username,)
-            ).fetchone()
-            return self._row_to_user(row)
+        container = get_async_container("users")
+        items: list[Dict[str, Any]] = []
+        async for item in container.query_items(
+            query="SELECT * FROM c WHERE c.username = @u",
+            parameters=[{"name": "@u", "value": username}],
+            enable_cross_partition_query=True,
+        ):
+            items.append(item)
+        return self._doc_to_user(items[0]) if items else None
 
-    def _save_user(self, user: Optional[UserAccount], conn=None) -> None:
+    async def _save_user(self, user: Optional[UserAccount]) -> None:
         if not user:
             return
-        data = user.model_dump_json()
-        if conn is not None:
-            conn.execute(
-                "INSERT OR REPLACE INTO users (token, username, data) VALUES (?, ?, ?)",
-                (user.token, user.username, data),
-            )
-            conn.execute(
-                "INSERT INTO change_feed (event_type, payload) VALUES (?, ?)",
-                ("USER_UPDATE", data),
-            )
-        else:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute(
-                    "INSERT OR REPLACE INTO users (token, username, data) VALUES (?, ?, ?)",
-                    (user.token, user.username, data),
-                )
-                conn.execute(
-                    "INSERT INTO change_feed (event_type, payload) VALUES (?, ?)",
-                    ("USER_UPDATE", data),
-                )
+        await get_async_container("users").upsert_item(self._user_to_doc(user))
 
-    def create_user(
+    async def create_user(
         self,
         token: str,
         username: str,
@@ -158,27 +166,23 @@ class LedgerEngine:
     ) -> bool:
         if not token or not username:
             return False
-        if self.get_user_by_username(username):
+        if await self.get_user_by_username(username):
             return False
-
         user = UserAccount(token=token, username=username, public_key=public_key)
         user.accounts["checking"].balance = max(initial_balance, 0.0)
-        try:
-            self._save_user(user)
-        except sqlite3.IntegrityError:
-            return False
+        await self._save_user(user)
         return True
 
-    def register_user(
+    async def register_user(
         self,
         token: str,
         username: str,
         public_key_hex: str,
         initial_balance: float = 0.0,
     ) -> None:
-        user = self._get_user(token)
+        user = await self._get_user(token)
         if not user:
-            self.create_user(
+            await self.create_user(
                 token=token,
                 username=username,
                 initial_balance=initial_balance,
@@ -189,31 +193,36 @@ class LedgerEngine:
         user.public_key = public_key_hex
         if user.accounts["checking"].balance == 0.0:
             user.accounts["checking"].balance = initial_balance
-        self._save_user(user)
+        await self._save_user(user)
 
-    def get_balance(self, token: str, account_type: str = "checking") -> float:
-        user = self._get_user(token)
+    async def get_balance(self, token: str, account_type: str = "checking") -> float:
+        user = await self._get_user(token)
         return user.accounts.get(account_type, AccountData()).balance if user else 0.0
 
-    def get_username(self, token: str) -> str:
-        user = self._get_user(token)
+    async def get_username(self, token: str) -> str:
+        user = await self._get_user(token)
         return user.username if user else "Unknown"
 
-    def get_token_by_username(self, username: str) -> Optional[str]:
-        with sqlite3.connect(self.db_path) as conn:
-            row = conn.execute(
-                "SELECT token FROM users WHERE username = ?", (username,)
-            ).fetchone()
-            return str(row[0]) if row else None
+    async def get_token_by_username(self, username: str) -> Optional[str]:
+        if not username:
+            return None
+        container = get_async_container("users")
+        items: list[Dict[str, Any]] = []
+        async for item in container.query_items(
+            query="SELECT c.id FROM c WHERE c.username = @u",
+            parameters=[{"name": "@u", "value": username}],
+            enable_cross_partition_query=True,
+        ):
+            items.append(item)
+        return items[0]["id"] if items else None
 
-    def _verify_signature(self, token: str, message: str, signature_hex: str) -> bool:
+    async def _verify_signature(self, token: str, message: str, signature_hex: str) -> bool:
         from pqcrypto.sign.ml_dsa_44 import verify as pq_verify
 
-        user = self._get_user(token)
+        user = await self._get_user(token)
         if not user or not user.public_key:
             return False
         try:
-            # Returns True on success
             return bool(
                 pq_verify(
                     bytes.fromhex(user.public_key),
@@ -224,7 +233,7 @@ class LedgerEngine:
         except Exception:
             return False
 
-    def transfer(
+    async def transfer(
         self,
         sender_token: str,
         recipient_username: str,
@@ -234,152 +243,151 @@ class LedgerEngine:
         to_account: str = "checking",
         signature: Optional[str] = None,
     ) -> bool:
-        """
-        Transfer funds between users atomically.
-        
-        Returns:
-            bool: True if transfer succeeded, False otherwise
-        """
-        # Validate inputs
-        if amount <= 0:
+        """Transfer funds with optimistic concurrency on the sender document."""
+        if amount <= 0 or not recipient_username or not description:
             return False
-        if not recipient_username or not description:
-            return False
-            
-        # Verify signature if provided
-        if signature and not self._verify_signature(
+
+        if signature and not await self._verify_signature(
             sender_token, f"{recipient_username}{amount}{description}", signature
         ):
             return False
 
-        try:
-            with sqlite3.connect(self.db_path, timeout=10) as conn:
-                conn.execute("BEGIN IMMEDIATE")
+        users_container = get_async_container("users")
 
-                recipient_row = conn.execute(
-                    "SELECT token FROM users WHERE username = ?", (recipient_username,)
-                ).fetchone()
-                recipient_token = str(recipient_row[0]) if recipient_row else None
-                if not recipient_token:
-                    return False
+        sender_doc = await self._get_user_doc(sender_token)
+        if not sender_doc:
+            return False
+        sender_etag = sender_doc.get("_etag")
 
-                if sender_token == recipient_token and from_account == to_account:
-                    return False
+        recipient_docs: list[Dict[str, Any]] = []
+        async for item in users_container.query_items(
+            query="SELECT * FROM c WHERE c.username = @u",
+            parameters=[{"name": "@u", "value": recipient_username}],
+            enable_cross_partition_query=True,
+        ):
+            recipient_docs.append(item)
+        if not recipient_docs:
+            return False
+        recipient_doc = recipient_docs[0]
 
-                s_user = self._get_user_from_conn(sender_token, conn)
-                r_user = self._get_user_from_conn(recipient_token, conn)
-                if not s_user or not r_user:
-                    return False
-                if from_account not in s_user.accounts or to_account not in r_user.accounts:
-                    return False
-                if s_user.accounts[from_account].balance < amount:
-                    return False
+        s_user = self._doc_to_user(sender_doc)
+        r_user = self._doc_to_user(recipient_doc)
 
-                tx = Transaction(
-                    sender=s_user.username,
-                    recipient=r_user.username,
-                    amount=amount,
-                    description=description,
-                    account_type=from_account,
-                )
-
-                s_user.accounts[from_account].balance -= amount
-                s_user.accounts[from_account].history.append(tx)
-                r_user.accounts[to_account].balance += amount
-                r_user.accounts[to_account].history.append(tx)
-
-                self._save_user(s_user, conn)
-                self._save_user(r_user, conn)
-                return True
-        except sqlite3.Error:
+        if sender_token == r_user.token and from_account == to_account:
+            return False
+        if from_account not in s_user.accounts or to_account not in r_user.accounts:
+            return False
+        if s_user.accounts[from_account].balance < amount:
             return False
 
-    def open_account(self, token: str, account_type: str) -> bool:
-        user = self._get_user(token)
+        tx = Transaction(
+            sender=s_user.username,
+            recipient=r_user.username,
+            amount=amount,
+            description=description,
+            account_type=from_account,
+        )
+        s_user.accounts[from_account].balance -= amount
+        s_user.accounts[from_account].history.append(tx)
+        r_user.accounts[to_account].balance += amount
+        r_user.accounts[to_account].history.append(tx)
+
+        try:
+            await users_container.upsert_item(
+                body=self._user_to_doc(s_user),
+                match_condition=MatchConditions.IfNotModified,
+                etag=sender_etag,
+            )
+            await users_container.upsert_item(body=self._user_to_doc(r_user))
+            await self._audit.log_transfer(
+                sender=s_user.username,
+                recipient=r_user.username,
+                amount=amount,
+                success=True,
+                description=description,
+            )
+            return True
+        except ResourceModifiedError:
+            await self._audit.log_transfer(
+                sender=s_user.username,
+                recipient=r_user.username,
+                amount=amount,
+                success=False,
+                description=description,
+            )
+            return False
+
+    async def open_account(self, token: str, account_type: str) -> bool:
+        user = await self._get_user(token)
         if not user or account_type in user.accounts:
             return bool(user)
         user.accounts[account_type] = AccountData()
-        self._save_user(user)
+        await self._save_user(user)
         return True
 
-    def request_funds(
+    async def request_funds(
         self, requester_token: str, target_username: str, amount: float, note: str
     ) -> bool:
-        """
-        Create a payment request from target user.
-        
-        Args:
-            requester_token: Token of user requesting funds
-            target_username: Username of user to request from
-            amount: Amount to request (must be positive)
-            note: Reason for request
-            
-        Returns:
-            bool: True if request created successfully
-        """
-        # Validate amount
+        """Create a payment request from target user."""
         if amount <= 0:
             return False
-            
-        # Get requester
-        req_user = self._get_user(requester_token)
+
+        req_user = await self._get_user(requester_token)
         if not req_user:
             return False
-            
-        # Get target user
-        target_token = self.get_token_by_username(target_username)
+
+        target_token = await self.get_token_by_username(target_username)
         if not target_token:
             return False
-        tar_user = self._get_user(target_token)
+        tar_user = await self._get_user(target_token)
         if not tar_user:
             return False
 
-        # Create unique request ID
         req_id = hashlib.sha256(
             f"{req_user.username}{datetime.now().isoformat()}{amount}".encode()
         ).hexdigest()[:8]
-        
-        req = {
+
+        tar_user.pending_requests.append({
             "id": req_id,
             "requester": req_user.username,
             "amount": amount,
             "note": note,
             "timestamp": datetime.now().isoformat(),
-        }
-        tar_user.pending_requests.append(req)
-        self._save_user(tar_user)
+        })
+        await self._save_user(tar_user)
         return True
 
-    def get_pending_requests(self, token: str) -> List[Dict[str, Any]]:
-        user = self._get_user(token)
+    async def get_pending_requests(self, token: str) -> List[Dict[str, Any]]:
+        user = await self._get_user(token)
         return user.pending_requests if user else []
 
-    def approve_request(
+    async def approve_request(
         self, token: str, request_id: str, signature: Optional[str] = None
     ) -> bool:
-        user = self._get_user(token)
+        user = await self._get_user(token)
         if not user:
             return False
-        for i, req in enumerate(user.pending_requests):
+        for req in user.pending_requests:
             if req["id"] == request_id:
-                if signature and not self._verify_signature(
+                if signature and not await self._verify_signature(
                     token, f"APPROVE{request_id}", signature
                 ):
                     return False
-                if self.transfer(
+                if await self.transfer(
                     token, req["requester"], req["amount"], f"Approved: {req['note']}"
                 ):
-                    user = self._get_user(token)
-                    if user:
-                        user.pending_requests = [
-                            r for r in user.pending_requests if r["id"] != request_id
+                    # Re-read after transfer so balance is current
+                    updated = await self._get_user(token)
+                    if updated:
+                        updated.pending_requests = [
+                            r for r in updated.pending_requests if r["id"] != request_id
                         ]
-                        self._save_user(user)
-                        return True
+                        await self._save_user(updated)
+                    return True
         return False
 
-    def get_history(self, token: str, account_type: str = "checking") -> str:
-        user = self._get_user(token)
+    async def get_history(self, token: str, account_type: str = "checking") -> str:
+        user = await self._get_user(token)
         if not user or account_type not in user.accounts:
             return "Account not found."
         history = user.accounts[account_type].history
@@ -390,45 +398,61 @@ class LedgerEngine:
         for tx in history:
             is_sender = tx.sender.lower() == user.username.lower()
             if is_sender:
-                # User sent money
                 lines.append(
                     f"- {tx.timestamp[:16]} SENT ${tx.amount:.2f} to {tx.recipient} - {tx.description}"
                 )
             else:
-                # User received money
                 lines.append(
                     f"- {tx.timestamp[:16]} RECEIVED ${tx.amount:.2f} from {tx.sender} - {tx.description}"
                 )
         return "\n".join(lines)
 
-    def list_user_accounts(self, token: str) -> str:
-        user = self._get_user(token)
+    async def list_user_accounts(self, token: str) -> str:
+        user = await self._get_user(token)
         if not user:
             return "User not found."
         return "\n".join(
-            [
-                f"- {at.capitalize()}: ${ad.balance:.2f}"
-                for at, ad in user.accounts.items()
-            ]
+            f"- {at.capitalize()}: ${ad.balance:.2f}"
+            for at, ad in user.accounts.items()
         )
 
-    def get_products(self) -> List[Product]:
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            return [
-                Product(**dict(r))
-                for r in conn.execute("SELECT * FROM products").fetchall()
-            ]
+    async def get_products(self) -> List[Product]:
+        container = get_async_container("products")
+        items: list[Dict[str, Any]] = []
+        async for item in container.query_items(
+            query="SELECT * FROM c",
+            enable_cross_partition_query=True,
+        ):
+            items.append(item)
+        return [
+            Product(
+                id=item["id"],
+                name=item["name"],
+                type=item["type"],
+                interest_rate=item["interest_rate"],
+                description=item["description"],
+            )
+            for item in items
+        ]
 
-    def get_change_feed(self, last_id: int = 0) -> List[Dict[str, Any]]:
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            return [
-                dict(r)
-                for r in conn.execute(
-                    "SELECT * FROM change_feed WHERE id > ? ORDER BY id ASC", (last_id,)
-                ).fetchall()
-            ]
+    async def get_change_feed(self, last_id: int = 0) -> List[Dict[str, Any]]:
+        """Return change feed events. last_id is treated as a Unix timestamp cursor (_ts)."""
+        container = get_async_container("change_feed")
+        items: list[Dict[str, Any]] = []
+        if last_id:
+            async for item in container.query_items(
+                query="SELECT * FROM c WHERE c._ts > @ts ORDER BY c._ts ASC",
+                parameters=[{"name": "@ts", "value": last_id}],
+                enable_cross_partition_query=True,
+            ):
+                items.append(item)
+        else:
+            async for item in container.query_items(
+                query="SELECT * FROM c ORDER BY c._ts ASC",
+                enable_cross_partition_query=True,
+            ):
+                items.append(item)
+        return items
 
 
 _ledger_instance: Optional[LedgerEngine] = None
@@ -437,6 +461,5 @@ _ledger_instance: Optional[LedgerEngine] = None
 def get_ledger() -> LedgerEngine:
     global _ledger_instance
     if _ledger_instance is None:
-        db_path = os.getenv("TEST_DB") or os.getenv("BANK_DB_PATH") or "data/bank.db"
-        _ledger_instance = LedgerEngine(db_path=db_path)
+        _ledger_instance = LedgerEngine()
     return _ledger_instance

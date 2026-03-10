@@ -47,11 +47,9 @@ npx expo start --dev-client
 # Terminal 1: Start LLM
 foundry model run qwen2.5-14b-instruct-generic-gpu:4
 
-# Terminal 2: Start backend
+# Terminal 2: Start Cosmos emulator + backend
+docker-compose up -d
 ./dev.sh alice
-
-# Terminal 3: CLI client
-uv run main.py --user alice
 ```
 
 ---
@@ -203,12 +201,9 @@ User: "What's my balance?"
 │   └── main.bicep
 │
 ├── scripts/                      # Utility scripts
-│   └── init-cosmos-local.py
 │
 ├── a2a_server.py                 # A2A server (5 agents)
 ├── mcp_server.py                 # MCP server (9 tools)
-├── mcp_banking_server.py         # Banking MCP wrapper
-├── cosmos_mcp_client.py          # Cosmos DB client
 ├── ledger.py                     # Transaction ledger
 ├── identity.py                   # ML-DSA-44 crypto
 │
@@ -271,7 +266,7 @@ az deployment sub create --location eastus --template-file infra/main.bicep
 az containerapp create --name 42bank-backend ...
 
 # 4. Initialize database
-uv run python scripts/init-cosmos-local.py
+uv run python bootstrap.py
 ```
 
 See [AZURE_DEPLOYMENT.md](AZURE_DEPLOYMENT.md) for complete guide.
@@ -339,7 +334,7 @@ All transactions signed with **ML-DSA-44** (FIPS 204):
 
 - **Python 3.10+** with uv package manager
 - **Node.js 18+** for mobile app
-- **Docker Desktop** (optional, for Cosmos DB emulator)
+- **Docker Desktop** (required, for Cosmos DB emulator)
 - **Foundry Local** (for local LLM)
 - **Expo CLI** (for mobile app)
 
@@ -349,12 +344,9 @@ All transactions signed with **ML-DSA-44** (FIPS 204):
 # Install dependencies
 uv sync
 
-# Start with SQLite (default)
+# Start Cosmos DB emulator + backend
+docker-compose up -d
 ./dev.sh alice
-
-# Start with Cosmos DB emulator
-docker-compose up -d cosmos-emulator
-DB_MODE=cosmos ./dev.sh alice
 
 # Run tests
 uv run pytest tests/ -v
@@ -423,7 +415,7 @@ npm run test:e2e
 ### Backend
 - **Python 3.10+** - FastAPI, Pydantic, Azure SDK
 - **Agent Framework** - Microsoft Agent Framework
-- **Database** - Cosmos DB (Serverless) / SQLite (local)
+- **Database** - Azure Cosmos DB (emulator for local dev)
 - **AI Model** - Qwen3.5-35B-A3B (Azure AI Foundry)
 
 ### Mobile
