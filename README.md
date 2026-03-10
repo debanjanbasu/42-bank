@@ -20,7 +20,6 @@ A **quantum-safe multi-agent banking platform** with mobile-first design, featur
 ### Cloud Backend
 - ☁️ **Azure AI Foundry** - Qwen3.5-35B-A3B (MoE model)
 - 💾 **Cosmos DB** - Serverless global database
-- 🔑 **Key Vault** - Secure secrets management
 - 📊 **Application Insights** - Full observability
 
 ---
@@ -119,7 +118,6 @@ docker-compose up -d
 │  ┌────────────────────────────────────────────────────────────────────┐  │
 │  │ Azure Services                                                     │  │
 │  │ • Cosmos DB (Serverless) - Users, transactions                    │  │
-│  │ • Key Vault - Secrets, encryption keys                            │  │
 │  │ • Notification Hubs - Push notifications                          │  │
 │  │ • Application Insights - Monitoring                               │  │
 │  └────────────────────────────────────────────────────────────────────┘  │
@@ -425,9 +423,8 @@ npm run test:e2e
 ### Azure Services
 - **AI Foundry** - Model hosting
 - **Cosmos DB** - Global database
-- **Container Apps** - Backend hosting
+- **Container Apps** - Backend hosting (managed identity, encrypted secrets)
 - **Notification Hubs** - Push notifications
-- **Key Vault** - Secrets management
 
 ---
 

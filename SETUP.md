@@ -79,12 +79,13 @@ Copy `.env.example` to `.env` and configure:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `JWT_SECRET` | Yes | Random string ≥32 chars for JWT signing |
+| `JWT_SECRET` | Yes (local) | Random string ≥32 chars for JWT signing |
 | `APP_ENV` | No | `development` (default), `staging`, `production` |
 | `FOUNDRY_LOCAL_ENDPOINT` | No | Override Foundry endpoint auto-discovery |
 | `AZURE_AI_PROJECT_ENDPOINT` | Production | Azure AI Foundry project URL |
 | `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Production | Model deployment name |
-| `AZURE_COSMOS_CONNECTION_STRING` | Auto-set by dev.sh | Cosmos DB connection string |
+| `AZURE_COSMOS_CONNECTION_STRING` | Local dev only | Set automatically by `dev.sh` (emulator key auth) |
+| `COSMOS_ENDPOINT` | Production | Cosmos account URL — managed identity auth, no key needed |
 | `COSMOS_DATABASE` | Auto-set by dev.sh | Cosmos database name (default: `banking`) |
 
 

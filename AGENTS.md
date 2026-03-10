@@ -520,11 +520,12 @@ assert is_transaction_successful(text)
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `AZURE_COSMOS_CONNECTION_STRING` | Cosmos DB connection | `AccountEndpoint=...` |
+| `AZURE_COSMOS_CONNECTION_STRING` | Cosmos DB connection (local dev only) | `AccountEndpoint=...` (emulator) |
+| `COSMOS_ENDPOINT` | Cosmos account URL (production) | `https://42bank-cosmos.documents.azure.com:443/` |
 | `COSMOS_DATABASE` | Cosmos database name | `banking` (default) |
 | `AZURE_AI_PROJECT_ENDPOINT` | Foundry project | `https://42-bank.cognitiveservices.azure.com/` |
 | `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Model deployment | `Qwen3.5-35B-A3B` |
-| `JWT_SECRET` | JWT signing key | (generate with secrets.token_urlsafe) |
+| `JWT_SECRET` | JWT signing key (local dev) | In production: Container Apps encrypted secret |
 | `APP_ENV` | Runtime environment | `development` / `staging` / `production` |
 
 ---
@@ -538,4 +539,6 @@ assert is_transaction_successful(text)
 - Each test function uses an isolated Cosmos DB database (deleted on teardown)
 - `data/keys/` is still used by `IdentityManager` for ML-DSA-44 key files
 - All Cosmos data operations are **async** (`azure.cosmos.aio`); `_init_db()` uses sync SDK at startup only
+- **Auth**: production uses `DefaultAzureCredential` (managed identity) for Cosmos — no keys in env vars. Local dev uses `AZURE_COSMOS_CONNECTION_STRING` (emulator key)
+- `JWT_SECRET` is passed as a `@secure()` Bicep parameter at deploy time and stored as a Container Apps encrypted secret — free, no Key Vault needed
 - Push notifications require a physical device; simulator will skip token registration gracefully

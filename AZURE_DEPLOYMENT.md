@@ -77,7 +77,7 @@ Ensure you have:
 
 ## Step 1: Deploy 42-Bank Infrastructure
 
-Deploy the 42-Bank specific resources (Cosmos DB, Key Vault, etc.).
+Deploy the 42-Bank specific resources (Cosmos DB, Log Analytics, Container Apps).
 
 ### 1.1 Using Bicep
 
@@ -114,10 +114,9 @@ If you prefer the Azure portal:
      - `pending_requests` (partition: `/request_id`)
      - `products` (partition: `/id`)
 
-3. **Key Vault**
-   - Name: `42bank-kv`
-   - SKU: Standard
-   - Enable RBAC
+3. **Container App**
+   - System-assigned managed identity
+   - JWT_SECRET stored as encrypted Container Apps secret
 
 ---
 
@@ -223,9 +222,8 @@ az monitor app-insights metrics show \
 | Cosmos DB | Serverless | $5-15 |
 | Container Apps | Consumption | $0-10 |
 | Qwen3.5-35B | Pay-per-use | $5-20 |
-| Key Vault | Standard | $0-1 |
 | Storage | LRS | $1-2 |
-| **Total** | | **$11-48/month** |
+| **Total** | | **$11-47/month** |
 
 ### Cost Optimization Tips
 
@@ -242,16 +240,15 @@ az monitor app-insights metrics show \
 
 | Component | Method |
 |-----------|--------|
-| Banking MCP | API Key + Entra ID |
-| Cosmos DB | Key Vault secrets |
+| Container App → Cosmos DB | System-assigned managed identity + data-plane RBAC |
 | Foundry Agents | Project Managed Identity |
+| JWT_SECRET | Container Apps encrypted secret (passed as `@secure()` Bicep param at deploy time) |
 
 ### Network Security
 
 - All endpoints HTTPS only (TLS terminated at Azure Front Door / App Service ingress)
 - CORS configured for banking app
 - Cosmos DB: Virtual network firewall
-- Key Vault: RBAC enabled
 
 ---
 
@@ -306,7 +303,7 @@ Cosmos DB is configured with Continuous Backup mode. Backups are retained for 30
 2. Select **Point in Time Restore** under Backups
 3. Choose target timestamp and resource group
 4. Create restore target account
-5. Update `AZURE_COSMOS_CONNECTION_STRING` in Key Vault with new account endpoint
+5. Update `AZURE_COSMOS_CONNECTION_STRING` in Container App env with new account endpoint
 6. Restart Container Apps to pick up new connection string
 
 ### Monthly Restore Test

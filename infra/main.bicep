@@ -3,16 +3,16 @@
 // This template creates:
 //   - Azure Cosmos DB account (Serverless)
 //   - Database and containers for banking data
-//   - Azure Key Vault for secrets
-//   - Storage account for Function App
-//   - Container Apps environment (if not exists)
+//   - Storage account for Container Apps
+//   - Container Apps environment + app (system-assigned managed identity)
+//   - Log Analytics + Application Insights
+//
+// No Key Vault — JWT_SECRET stored as Container Apps encrypted secret (free).
+// Cosmos DB access via managed identity data-plane RBAC (no keys).
 //
 // Usage:
-//   az deployment sub create --location eastus --template-file main.bicep
-//
-// Prerequisites:
-//   - Resource group '42-bank' already exists
-//   - AI Foundry project '42-bank' already exists
+//   az deployment sub create --location eastus --template-file main.bicep \
+//     --parameters jwtSecret=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
 
 targetScope = 'subscription'
 
@@ -25,8 +25,9 @@ param environment string = 'production'
 @description('Cosmos DB account name')
 param cosmosAccountName string = '42bank-cosmos'
 
-@description('Key Vault name')
-param keyVaultName string = '42bank-kv'
+@description('JWT secret for token signing (stored as Container Apps encrypted secret)')
+@secure()
+param jwtSecret string
 
 @description('Storage account name (must be globally unique)')
 param storageAccountName string = '42bankstorage${uniqueString(subscription().id, location)}'
@@ -34,8 +35,11 @@ param storageAccountName string = '42bankstorage${uniqueString(subscription().id
 @description('Container Apps environment name')
 param containerAppsEnvName string = '42bank-env'
 
-@description('Enable public network access for Key Vault (disable in production)')
-param keyVaultPublicNetworkAccess string = 'Enabled'
+@description('Container App name')
+param containerAppName string = '42bank-api'
+
+@description('Container image to deploy (e.g. myregistry.azurecr.io/42bank:latest)')
+param containerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
 // Variables
 var resourceGroupName = '42-bank'
@@ -198,44 +202,6 @@ resource productsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/c
   }
 }
 
-// ============ Key Vault ============
-resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
-  name: '${keyVaultName}-${uniqueSuffix}'
-  location: location
-  resourceGroup: rg.name
-  properties: {
-    tenantId: subscription().tenantId
-    sku: {
-      name: 'standard'
-      family: 'A'
-    }
-    enableSoftDelete: true
-    enablePurgeProtection: true
-    enableRbacAuthorization: true
-    // Set keyVaultPublicNetworkAccess param to 'Disabled' in production for hardened security
-    publicNetworkAccess: keyVaultPublicNetworkAccess
-    networkAcls: {
-      bypass: 'AzureServices'
-      defaultAction: 'Deny'
-      ipRules: []
-      virtualNetworkRules: []
-    }
-  }
-  tags: {
-    Environment: environment
-    Project: '42-bank'
-  }
-}
-
-// Cosmos connection string secret
-resource cosmosConnectionStringSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: keyVault
-  name: 'cosmos-connection-string'
-  properties: {
-    value: 'AccountEndpoint=${cosmos.properties.documentEndpoint};AccountKey=${cosmos.listKeys().primaryMasterKey}'
-  }
-}
-
 // ============ Storage Account ============
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: storageAccountName
@@ -316,13 +282,77 @@ resource insights 'Microsoft.Insights/components@2020-02-02' = {
   }
 }
 
-// ============ Outputs ============
+// ============ Container App ============
+resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
+  name: containerAppName
+  location: location
+  resourceGroup: rg.name
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {
+    managedEnvironmentId: containerAppsEnv.id
+    configuration: {
+      ingress: {
+        external: true
+        targetPort: 8000
+        transport: 'http'
+      }
+      secrets: [
+        {
+          // Stored encrypted in Container Apps platform — no Key Vault needed
+          name: 'jwt-secret'
+          value: jwtSecret
+        }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: '42bank-api'
+          image: containerImage
+          env: [
+            { name: 'COSMOS_ENDPOINT'; value: cosmos.properties.documentEndpoint }
+            { name: 'COSMOS_DATABASE'; value: databaseName }
+            { name: 'APP_ENV'; value: environment }
+            { name: 'JWT_SECRET'; secretRef: 'jwt-secret' }
+            { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'; value: insights.properties.ConnectionString }
+          ]
+          resources: {
+            cpu: json('0.5')
+            memory: '1Gi'
+          }
+        }
+      ]
+      scale: {
+        minReplicas: 1
+        maxReplicas: 10
+      }
+    }
+  }
+  tags: {
+    Environment: environment
+    Project: '42-bank'
+  }
+}
+
+// ============ RBAC: Managed Identity → Cosmos DB ============
+// "Cosmos DB Built-in Data Contributor" (data-plane role, no key needed)
+resource cosmosRoleAssignment 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-11-15' = {
+  parent: cosmos
+  name: guid(cosmos.id, containerApp.identity.principalId, 'cosmos-data-contributor')
+  properties: {
+    roleDefinitionId: '/${subscription().subscriptionId}/resourceGroups/${resourceGroupName}/providers/Microsoft.DocumentDB/databaseAccounts/${cosmos.name}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
+    principalId: containerApp.identity.principalId
+    scope: cosmos.id
+  }
+}
+
 output cosmosEndpoint string = cosmos.properties.documentEndpoint
-output cosmosConnectionString string = 'AccountEndpoint=${cosmos.properties.documentEndpoint};AccountKey=${cosmos.listKeys().primaryMasterKey}'
 output cosmosAccountId string = cosmos.id
-output keyVaultName string = keyVault.name
-output keyVaultUri string = keyVault.properties.vaultUri
 output storageAccountName string = storage.name
 output containerAppsEnvironmentId string = containerAppsEnv.id
+output containerAppFqdn string = containerApp.properties.configuration.ingress.fqdn
+output managedIdentityPrincipalId string = containerApp.identity.principalId
 output logAnalyticsWorkspaceId string = logAnalytics.properties.workspaceId
-output applicationInsightsInstrumentationKey string = insights.properties.InstrumentationKey
+output applicationInsightsConnectionString string = insights.properties.ConnectionString
