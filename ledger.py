@@ -110,6 +110,11 @@ class LedgerEngine:
         }
 
     async def _get_user(self, token: str) -> Optional[UserAccount]:
+        """Return a UserAccount for the given token, or None if not found.
+
+        Use this when you need a validated Pydantic model for business logic.
+        For raw Cosmos documents (e.g. when you need the _etag), use _get_user_doc.
+        """
         if not token:
             return None
         container = get_async_container("users")
@@ -164,6 +169,11 @@ class LedgerEngine:
         initial_balance: float = 0.0,
         public_key: Optional[str] = None,
     ) -> bool:
+        """Create a brand-new user account.
+
+        Returns False if token/username is empty or the username already exists.
+        Unlike register_user(), this never updates an existing user.
+        """
         if not token or not username:
             return False
         if await self.get_user_by_username(username):
@@ -180,6 +190,12 @@ class LedgerEngine:
         public_key_hex: str,
         initial_balance: float = 0.0,
     ) -> None:
+        """Create or update a user, setting their public key.
+
+        If the user does not exist, creates them via create_user().
+        If they do exist, updates their public_key and optionally sets
+        their checking balance (only if currently zero).
+        """
         user = await self._get_user(token)
         if not user:
             await self.create_user(
@@ -243,7 +259,14 @@ class LedgerEngine:
         to_account: str = "checking",
         signature: Optional[str] = None,
     ) -> bool:
-        """Transfer funds with optimistic concurrency on the sender document."""
+        """Transfer funds with optimistic concurrency on both sender and recipient.
+
+        Uses etag-based optimistic concurrency to prevent lost updates.
+        The sender update fails fast on conflict. The recipient update retries
+        up to 3 times on conflict since we are only adding funds.
+
+        Returns True on success, False on validation failure or concurrency conflict.
+        """
         if amount <= 0 or not recipient_username or not description:
             return False
 
@@ -269,6 +292,7 @@ class LedgerEngine:
         if not recipient_docs:
             return False
         recipient_doc = recipient_docs[0]
+        recipient_etag = recipient_doc.get("_etag")
 
         s_user = self._doc_to_user(sender_doc)
         r_user = self._doc_to_user(recipient_doc)
@@ -289,8 +313,6 @@ class LedgerEngine:
         )
         s_user.accounts[from_account].balance -= amount
         s_user.accounts[from_account].history.append(tx)
-        r_user.accounts[to_account].balance += amount
-        r_user.accounts[to_account].history.append(tx)
 
         try:
             await users_container.upsert_item(
@@ -298,15 +320,6 @@ class LedgerEngine:
                 match_condition=MatchConditions.IfNotModified,
                 etag=sender_etag,
             )
-            await users_container.upsert_item(body=self._user_to_doc(r_user))
-            await self._audit.log_transfer(
-                sender=s_user.username,
-                recipient=r_user.username,
-                amount=amount,
-                success=True,
-                description=description,
-            )
-            return True
         except ResourceModifiedError:
             await self._audit.log_transfer(
                 sender=s_user.username,
@@ -316,6 +329,48 @@ class LedgerEngine:
                 description=description,
             )
             return False
+
+        # Retry recipient update on concurrent modification (we're only adding funds)
+        max_retries = 3
+        for attempt in range(max_retries):
+            if attempt > 0:
+                recipient_doc = await self._get_user_doc(r_user.token)
+                if not recipient_doc:
+                    break
+                recipient_etag = recipient_doc.get("_etag")
+                r_user = self._doc_to_user(recipient_doc)
+
+            r_user.accounts[to_account].balance += amount
+            r_user.accounts[to_account].history.append(tx)
+
+            try:
+                await users_container.upsert_item(
+                    body=self._user_to_doc(r_user),
+                    match_condition=MatchConditions.IfNotModified,
+                    etag=recipient_etag,
+                )
+                await self._audit.log_transfer(
+                    sender=s_user.username,
+                    recipient=r_user.username,
+                    amount=amount,
+                    success=True,
+                    description=description,
+                )
+                return True
+            except ResourceModifiedError:
+                if attempt == max_retries - 1:
+                    # All retries exhausted — log failure.
+                    # Sender was already debited; this needs manual reconciliation.
+                    await self._audit.log_transfer(
+                        sender=s_user.username,
+                        recipient=r_user.username,
+                        amount=amount,
+                        success=False,
+                        description=f"RECONCILE_NEEDED: {description}",
+                    )
+                    return False
+                await asyncio.sleep(0.1 * (attempt + 1))
+        return False
 
     async def open_account(self, token: str, account_type: str) -> bool:
         user = await self._get_user(token)
@@ -364,9 +419,18 @@ class LedgerEngine:
     async def approve_request(
         self, token: str, request_id: str, signature: Optional[str] = None
     ) -> bool:
-        user = await self._get_user(token)
-        if not user:
+        """Approve a pending payment request.
+
+        Uses optimistic concurrency (etag) when removing the request to prevent
+        duplicate approvals of the same request under concurrent access.
+
+        Returns True if the request was found, approved, and the transfer succeeded.
+        """
+        user_doc = await self._get_user_doc(token)
+        if not user_doc:
             return False
+        user = self._doc_to_user(user_doc)
+
         for req in user.pending_requests:
             if req["id"] == request_id:
                 if signature and not await self._verify_signature(
@@ -376,13 +440,32 @@ class LedgerEngine:
                 if await self.transfer(
                     token, req["requester"], req["amount"], f"Approved: {req['note']}"
                 ):
-                    # Re-read after transfer so balance is current
-                    updated = await self._get_user(token)
-                    if updated:
+                    # Re-read with etag to remove request atomically
+                    users_container = get_async_container("users")
+                    updated_doc = await self._get_user_doc(token)
+                    if updated_doc:
+                        updated = self._doc_to_user(updated_doc)
+                        updated_etag = updated_doc.get("_etag")
                         updated.pending_requests = [
                             r for r in updated.pending_requests if r["id"] != request_id
                         ]
-                        await self._save_user(updated)
+                        try:
+                            await users_container.upsert_item(
+                                body=self._user_to_doc(updated),
+                                match_condition=MatchConditions.IfNotModified,
+                                etag=updated_etag,
+                            )
+                        except ResourceModifiedError:
+                            # Concurrent modification — re-read and retry removal once
+                            retry_doc = await self._get_user_doc(token)
+                            if retry_doc:
+                                retry_user = self._doc_to_user(retry_doc)
+                                retry_user.pending_requests = [
+                                    r for r in retry_user.pending_requests if r["id"] != request_id
+                                ]
+                                await users_container.upsert_item(
+                                    body=self._user_to_doc(retry_user)
+                                )
                     return True
         return False
 

@@ -51,7 +51,7 @@ def cosmos_db():
 class TestJWTSecurity:
     """Tests that the token validation layer correctly rejects bad tokens."""
 
-    def test_validate_token_rejects_wrong_algorithm(self):
+    async def test_validate_token_rejects_wrong_algorithm(self):
         """Token signed with HS512 should be rejected when server expects HS256."""
         from api.deps import JWT_SECRET, JWT_ALGORITHM, validate_token
         from fastapi import HTTPException
@@ -62,10 +62,10 @@ class TestJWTSecurity:
             algorithm="HS512",
         )
         with pytest.raises(HTTPException) as exc_info:
-            validate_token(bad_token)
+            await validate_token(bad_token)
         assert exc_info.value.status_code == 401
 
-    def test_validate_token_rejects_expired(self):
+    async def test_validate_token_rejects_expired(self):
         """Expired token should raise 401."""
         from api.deps import JWT_SECRET, JWT_ALGORITHM, validate_token
         from fastapi import HTTPException
@@ -80,10 +80,10 @@ class TestJWTSecurity:
             algorithm=JWT_ALGORITHM,
         )
         with pytest.raises(HTTPException) as exc_info:
-            validate_token(expired_token)
+            await validate_token(expired_token)
         assert exc_info.value.status_code == 401
 
-    def test_validate_token_rejects_wrong_secret(self):
+    async def test_validate_token_rejects_wrong_secret(self):
         """Token signed with different secret should be rejected."""
         from api.deps import JWT_ALGORITHM, validate_token
         from fastapi import HTTPException
@@ -94,10 +94,10 @@ class TestJWTSecurity:
             algorithm=JWT_ALGORITHM,
         )
         with pytest.raises(HTTPException) as exc_info:
-            validate_token(bad_token)
+            await validate_token(bad_token)
         assert exc_info.value.status_code == 401
 
-    def test_validate_token_rejects_wrong_type(self):
+    async def test_validate_token_rejects_wrong_type(self):
         """Refresh token should not be accepted as access token."""
         from api.deps import JWT_SECRET, JWT_ALGORITHM, validate_token
         from fastapi import HTTPException
@@ -112,10 +112,10 @@ class TestJWTSecurity:
             algorithm=JWT_ALGORITHM,
         )
         with pytest.raises(HTTPException) as exc_info:
-            validate_token(refresh_token, expected_type="access")
+            await validate_token(refresh_token, expected_type="access")
         assert exc_info.value.status_code == 401
 
-    def test_validate_token_accepts_valid(self):
+    async def test_validate_token_accepts_valid(self, cosmos_db):
         """Valid token should decode successfully."""
         from api.deps import JWT_SECRET, JWT_ALGORITHM, validate_token
 
@@ -130,7 +130,7 @@ class TestJWTSecurity:
             JWT_SECRET,
             algorithm=JWT_ALGORITHM,
         )
-        payload = validate_token(token)
+        payload = await validate_token(token)
         assert payload["sub"] == "alice_tok"
 
 

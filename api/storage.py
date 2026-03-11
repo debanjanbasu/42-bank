@@ -10,6 +10,12 @@ from db.cosmos import get_async_container, get_container, get_database
 
 
 class APIStorage:
+    """Async storage layer for auth devices, key backups, challenges, and token blacklist.
+
+    All data operations use the async Cosmos SDK. The sync SDK is only used
+    during __init__ to create containers if they don't exist.
+    """
+
     def __init__(self) -> None:
         self._init_db()
 
@@ -35,6 +41,11 @@ class APIStorage:
         biometric_enabled: bool,
         push_token: Optional[str],
     ) -> None:
+        """Register or update a device for a user.
+
+        Idempotent on (user_token, device_id_hash): re-upserting the same
+        device preserves its original registered_at timestamp.
+        """
         now = datetime.utcnow().isoformat()
         container = get_async_container("auth_devices")
         doc_id = f"{user_token}#{device_id_hash}"
@@ -53,6 +64,15 @@ class APIStorage:
             "registered_at": registered_at,
             "updated_at": now,
         })
+
+    async def remove_device(self, user_token: str, device_id_hash: str) -> None:
+        """Remove a registered device by its hashed ID."""
+        container = get_async_container("auth_devices")
+        doc_id = f"{user_token}#{device_id_hash}"
+        try:
+            await container.delete_item(item=doc_id, partition_key=user_token)
+        except CosmosResourceNotFoundError:
+            pass
 
     async def has_device(self, user_token: str, device_id_hash: str) -> bool:
         container = get_async_container("auth_devices")
@@ -199,6 +219,7 @@ class APIStorage:
             })
 
     async def is_token_revoked(self, jti: str) -> bool:
+        """Check if a JWT (identified by its JTI claim) has been revoked."""
         try:
             await get_async_container("token_blacklist").read_item(item=jti, partition_key=jti)
             return True

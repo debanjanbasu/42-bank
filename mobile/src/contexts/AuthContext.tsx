@@ -97,6 +97,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  // Clears session state only. Cryptographic keys are intentionally preserved
+  // because they are protected by biometric auth (Keychain/Keystore) and are
+  // needed for transaction signing after re-login. Only explicit logout (which
+  // calls KeyManager.deleteKeys()) performs full key cleanup.
   const clearAuth = async () => {
     await StorageService.clearAuth();
     setUser(null);

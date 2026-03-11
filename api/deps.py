@@ -30,7 +30,8 @@ def validate_jwt_configuration() -> None:
             )
 
 
-def validate_token(token: str, expected_type: Optional[str] = "access") -> dict[str, Any]:
+async def validate_token(token: str, expected_type: Optional[str] = "access") -> dict[str, Any]:
+    """Decode and validate a JWT token, checking expiry, type, and revocation."""
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except jwt.ExpiredSignatureError as exc:
@@ -42,7 +43,7 @@ def validate_token(token: str, expected_type: Optional[str] = "access") -> dict[
         raise HTTPException(401, f"Invalid token type: expected {expected_type}")
 
     jti = payload.get("jti", "")
-    if jti and get_api_storage().is_token_revoked(jti):
+    if jti and await get_api_storage().is_token_revoked(jti):
         raise HTTPException(401, "Token has been revoked")
 
     return payload
@@ -51,7 +52,7 @@ def validate_token(token: str, expected_type: Optional[str] = "access") -> dict[
 async def get_current_user(authorization: str = Header(None)) -> dict[str, Any]:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Missing or invalid authorization header")
-    return validate_token(authorization[7:])
+    return await validate_token(authorization[7:])
 
 
 def validate_env() -> None:

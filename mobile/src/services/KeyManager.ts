@@ -96,19 +96,39 @@ export class KeyManager {
     await Keychain.resetGenericPassword({ service: PUBLIC_KEY_SERVICE });
   }
 
+  // Base64 lookup table — avoids dependency on btoa/atob which may not be
+  // available or reliable across all React Native engines.
+  private static readonly BASE64_CHARS =
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
   private static uint8ArrayToBase64(bytes: Uint8Array): string {
-    let binary = '';
-    for (let i = 0; i < bytes.length; i++) {
-      binary += String.fromCharCode(bytes[i]);
+    let result = '';
+    const len = bytes.length;
+    for (let i = 0; i < len; i += 3) {
+      const b0 = bytes[i];
+      const b1 = i + 1 < len ? bytes[i + 1] : 0;
+      const b2 = i + 2 < len ? bytes[i + 2] : 0;
+      result += this.BASE64_CHARS[b0 >> 2];
+      result += this.BASE64_CHARS[((b0 & 3) << 4) | (b1 >> 4)];
+      result += i + 1 < len ? this.BASE64_CHARS[((b1 & 15) << 2) | (b2 >> 6)] : '=';
+      result += i + 2 < len ? this.BASE64_CHARS[b2 & 63] : '=';
     }
-    return btoa(binary);
+    return result;
   }
 
   private static base64ToUint8Array(base64: string): Uint8Array {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
+    const cleaned = base64.replace(/=+$/, '');
+    const len = cleaned.length;
+    const bytes = new Uint8Array(Math.floor((len * 3) / 4));
+    let j = 0;
+    for (let i = 0; i < len; i += 4) {
+      const a = this.BASE64_CHARS.indexOf(cleaned[i]);
+      const b = i + 1 < len ? this.BASE64_CHARS.indexOf(cleaned[i + 1]) : 0;
+      const c = i + 2 < len ? this.BASE64_CHARS.indexOf(cleaned[i + 2]) : 0;
+      const d = i + 3 < len ? this.BASE64_CHARS.indexOf(cleaned[i + 3]) : 0;
+      bytes[j++] = (a << 2) | (b >> 4);
+      if (i + 2 < len) bytes[j++] = ((b & 15) << 4) | (c >> 2);
+      if (i + 3 < len) bytes[j++] = ((c & 3) << 6) | d;
     }
     return bytes;
   }

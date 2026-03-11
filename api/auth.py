@@ -18,6 +18,7 @@ Security:
 
 import os
 import hashlib
+import secrets
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Optional
@@ -190,8 +191,8 @@ async def register(request: Request, body: RegisterRequest):
     if existing:
         raise HTTPException(400, f"Username '{body.username}' already exists")
     
-    # Generate user token (internal ID)
-    user_token = f"{body.username}_token_{datetime.now().timestamp()}"
+    # Generate user token (internal ID) using cryptographically secure random
+    user_token = f"{body.username}_{secrets.token_urlsafe(32)}"
     
     # Create user in ledger
     success = await ledger.create_user(
@@ -204,10 +205,6 @@ async def register(request: Request, body: RegisterRequest):
     if not success:
         raise HTTPException(500, "Failed to create user")
     
-    device_count = await get_api_storage().count_devices(user_token)
-    if device_count >= MAX_DEVICES_PER_USER:
-        raise HTTPException(400, f"Maximum device limit ({MAX_DEVICES_PER_USER}) reached for this account")
-    
     await register_device_for_user(
         user_token=user_token,
         device_id=body.device_id,
@@ -215,6 +212,14 @@ async def register(request: Request, body: RegisterRequest):
         biometric_enabled=body.biometric_enabled,
         push_token=body.push_token,
     )
+
+    # Verify device count AFTER registration to close TOCTOU window.
+    # upsert_device is idempotent on device_id, so this is safe.
+    device_count = await get_api_storage().count_devices(user_token)
+    if device_count > MAX_DEVICES_PER_USER:
+        device_hash = hash_device_id(body.device_id)
+        await get_api_storage().remove_device(user_token, device_hash)
+        raise HTTPException(400, f"Maximum device limit ({MAX_DEVICES_PER_USER}) reached for this account")
     
     # Generate JWT tokens
     access_token = generate_jwt(user_token, body.username, body.device_id)
@@ -283,7 +288,7 @@ async def refresh_token(request: Request, body: RefreshRequest):
     without requiring user to login again.
     """
     # Validate refresh token
-    payload = validate_token(body.refresh_token, expected_type="refresh")
+    payload = await validate_token(body.refresh_token, expected_type="refresh")
     
     # Generate new access token
     new_token = generate_jwt(
@@ -311,10 +316,6 @@ async def register_device(
     Users can have multiple devices (phone, tablet).
     Each device needs to be registered separately.
     """
-    device_count = await get_api_storage().count_devices(user["sub"])
-    if device_count >= MAX_DEVICES_PER_USER:
-        raise HTTPException(400, f"Maximum device limit ({MAX_DEVICES_PER_USER}) reached for this account")
-
     await register_device_for_user(
         user_token=user["sub"],
         device_id=request.device_id,
@@ -322,6 +323,13 @@ async def register_device(
         biometric_enabled=request.biometric_enabled,
         push_token=request.push_token,
     )
+
+    # Verify device count AFTER registration to close TOCTOU window.
+    device_count = await get_api_storage().count_devices(user["sub"])
+    if device_count > MAX_DEVICES_PER_USER:
+        device_hash = hash_device_id(request.device_id)
+        await get_api_storage().remove_device(user["sub"], device_hash)
+        raise HTTPException(400, f"Maximum device limit ({MAX_DEVICES_PER_USER}) reached for this account")
     
     return {
         "status": "success",
