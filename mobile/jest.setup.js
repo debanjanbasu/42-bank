@@ -1,5 +1,3 @@
-import '@testing-library/jest-native/extend-expect';
-
 jest.mock('react-native-keychain', () => ({
   setGenericPassword: jest.fn().mockResolvedValue(true),
   getGenericPassword: jest.fn().mockResolvedValue({ username: 'key', password: 'value' }),
@@ -16,6 +14,31 @@ jest.mock('expo-local-authentication', () => ({
   AuthenticationType: { FINGERPRINT: 1, FACIAL_RECOGNITION: 2, IRIS: 3 },
 }));
 
-jest.mock('@react-native-async-storage/async-storage', () =>
-  require('@react-native-async-storage/async-storage/jest/async-storage-mock')
-);
+jest.mock('@react-native-async-storage/async-storage', () => {
+  return {
+    getItem: jest.fn(async (key) => {
+      return null;
+    }),
+    setItem: jest.fn(async (key, value) => {
+      return;
+    }),
+    removeItem: jest.fn(async (key) => {
+      return;
+    }),
+    clear: jest.fn(async () => {
+      return;
+    }),
+    getAllKeys: jest.fn(async () => {
+      return [];
+    }),
+    multiGet: jest.fn(async (keys) => {
+      return keys.map(key => [key, null]);
+    }),
+    multiSet: jest.fn(async (keyValuePairs) => {
+      return;
+    }),
+    multiRemove: jest.fn(async (keys) => {
+      return;
+    }),
+  };
+});

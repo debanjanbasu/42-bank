@@ -1,5 +1,5 @@
 import React from 'react';
-import { renderHook, act } from '@testing-library/react-hooks';
+import { renderHook, act } from '@testing-library/react-native';
 import { AuthProvider, useAuth } from '../AuthContext';
 import { StorageService } from '@/services/StorageService';
 import { AuthService } from '@/services/AuthService';
@@ -23,8 +23,7 @@ describe('AuthContext', () => {
   });
 
   it('starts unauthenticated when no stored session', async () => {
-    const { result, waitForNextUpdate } = renderHook(() => useAuth(), { wrapper });
-    await waitForNextUpdate();
+    const { result } = renderHook(() => useAuth(), { wrapper });
     expect(result.current.isAuthenticated).toBe(false);
     expect(result.current.user).toBeNull();
   });
@@ -35,9 +34,7 @@ describe('AuthContext', () => {
     (StorageService.getToken as jest.Mock).mockResolvedValue('valid-token');
     (AuthService.verifyToken as jest.Mock).mockResolvedValue(true);
 
-    const { result, waitForNextUpdate } = renderHook(() => useAuth(), { wrapper });
-    await waitForNextUpdate();
-
+    const { result } = renderHook(() => useAuth(), { wrapper });
     expect(result.current.isAuthenticated).toBe(true);
     expect(result.current.user?.username).toBe('alice');
   });
@@ -50,9 +47,7 @@ describe('AuthContext', () => {
     (StorageService.getRefreshToken as jest.Mock).mockResolvedValue(null);
     (StorageService.clearAuth as jest.Mock).mockResolvedValue(undefined);
 
-    const { result, waitForNextUpdate } = renderHook(() => useAuth(), { wrapper });
-    await waitForNextUpdate();
-
+    const { result } = renderHook(() => useAuth(), { wrapper });
     expect(result.current.isAuthenticated).toBe(false);
   });
 
@@ -66,9 +61,7 @@ describe('AuthContext', () => {
     (AuthService.verifyToken as jest.Mock).mockResolvedValue(true);
     (StorageService.setToken as jest.Mock).mockResolvedValue(undefined);
 
-    const { result, waitForNextUpdate } = renderHook(() => useAuth(), { wrapper });
-    await waitForNextUpdate();
-
+    const { result } = renderHook(() => useAuth(), { wrapper });
     expect(AuthService.refreshToken).toHaveBeenCalledWith('refresh-token');
     expect(StorageService.setToken).toHaveBeenCalledWith('new-access-token');
   });
@@ -81,8 +74,7 @@ describe('AuthContext', () => {
     (KeyManager.deleteKeys as jest.Mock).mockResolvedValue(undefined);
     (StorageService.clearAuth as jest.Mock).mockResolvedValue(undefined);
 
-    const { result, waitForNextUpdate } = renderHook(() => useAuth(), { wrapper });
-    await waitForNextUpdate();
+    const { result } = renderHook(() => useAuth(), { wrapper });
 
     await act(async () => {
       await result.current.logout();
