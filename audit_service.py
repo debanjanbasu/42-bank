@@ -69,12 +69,12 @@ def run_audit_service():
                 changes = list(container.query_items(
                     query="SELECT * FROM c WHERE c._ts > @ts ORDER BY c._ts ASC",
                     parameters=[{"name": "@ts", "value": last_ts}],
-                    enable_cross_partition_query=True,
+
                 ))
             else:
                 changes = list(container.query_items(
                     query="SELECT TOP 1 c._ts FROM c ORDER BY c._ts DESC",
-                    enable_cross_partition_query=True,
+
                 ))
                 if changes:
                     last_ts = changes[0].get("_ts", 0)

@@ -122,7 +122,7 @@ class LedgerEngine:
         async for item in container.query_items(
             query="SELECT * FROM c WHERE c.id = @token",
             parameters=[{"name": "@token", "value": token}],
-            enable_cross_partition_query=True,
+
         ):
             items.append(item)
         return self._doc_to_user(items[0]) if items else None
@@ -136,7 +136,7 @@ class LedgerEngine:
         async for item in container.query_items(
             query="SELECT * FROM c WHERE c.id = @token",
             parameters=[{"name": "@token", "value": token}],
-            enable_cross_partition_query=True,
+
         ):
             items.append(item)
         return items[0] if items else None
@@ -152,7 +152,7 @@ class LedgerEngine:
         async for item in container.query_items(
             query="SELECT * FROM c WHERE c.username = @u",
             parameters=[{"name": "@u", "value": username}],
-            enable_cross_partition_query=True,
+
         ):
             items.append(item)
         return self._doc_to_user(items[0]) if items else None
@@ -227,7 +227,7 @@ class LedgerEngine:
         async for item in container.query_items(
             query="SELECT c.id FROM c WHERE c.username = @u",
             parameters=[{"name": "@u", "value": username}],
-            enable_cross_partition_query=True,
+
         ):
             items.append(item)
         return items[0]["id"] if items else None
@@ -286,7 +286,7 @@ class LedgerEngine:
         async for item in users_container.query_items(
             query="SELECT * FROM c WHERE c.username = @u",
             parameters=[{"name": "@u", "value": recipient_username}],
-            enable_cross_partition_query=True,
+
         ):
             recipient_docs.append(item)
         if not recipient_docs:
@@ -504,7 +504,7 @@ class LedgerEngine:
         items: list[Dict[str, Any]] = []
         async for item in container.query_items(
             query="SELECT * FROM c",
-            enable_cross_partition_query=True,
+
         ):
             items.append(item)
         return [
@@ -526,13 +526,13 @@ class LedgerEngine:
             async for item in container.query_items(
                 query="SELECT * FROM c WHERE c._ts > @ts ORDER BY c._ts ASC",
                 parameters=[{"name": "@ts", "value": last_id}],
-                enable_cross_partition_query=True,
+
             ):
                 items.append(item)
         else:
             async for item in container.query_items(
                 query="SELECT * FROM c ORDER BY c._ts ASC",
-                enable_cross_partition_query=True,
+
             ):
                 items.append(item)
         return items

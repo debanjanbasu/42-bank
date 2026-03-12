@@ -88,7 +88,7 @@ class APIStorage:
         async for item in container.query_items(
             query="SELECT * FROM c WHERE c.user_token = @t ORDER BY c.registered_at ASC",
             parameters=[{"name": "@t", "value": user_token}],
-            enable_cross_partition_query=False,
+
         ):
             items.append(item)
         return [
@@ -123,7 +123,7 @@ class APIStorage:
         async for item in container.query_items(
             query="SELECT * FROM c WHERE c.user_token = @t",
             parameters=[{"name": "@t", "value": user_token}],
-            enable_cross_partition_query=False,
+
         ):
             items.append(item)
         if not items:
@@ -147,7 +147,7 @@ class APIStorage:
         async for item in container.query_items(
             query="SELECT c.id, c.backup_id FROM c WHERE c.user_token = @t",
             parameters=[{"name": "@t", "value": user_token}],
-            enable_cross_partition_query=False,
+
         ):
             items.append(item)
         for item in items:
@@ -200,7 +200,7 @@ class APIStorage:
         async for item in container.query_items(
             query="SELECT VALUE COUNT(1) FROM c WHERE c.user_token = @t",
             parameters=[{"name": "@t", "value": user_token}],
-            enable_cross_partition_query=False,
+
         ):
             items.append(item)
         val = items[0] if items else 0
@@ -232,7 +232,7 @@ class APIStorage:
         async for item in container.query_items(
             query="SELECT c.id, c.jti FROM c WHERE c.revoked_at < @ts",
             parameters=[{"name": "@ts", "value": before_timestamp}],
-            enable_cross_partition_query=True,
+
         ):
             items.append(item)
         for item in items:
