@@ -27,7 +27,7 @@ docker-compose up -d        # Start Cosmos emulator
 ./dev.sh alice              # Bootstrap DB and start servers
 ```
 
-Docker is **required** for local development. The emulator runs at `https://localhost:8081/`.
+Docker is **required** for local development. The emulator API runs at `https://localhost:8081/` and the Data Explorer UI at `http://localhost:1234/`.
 
 ### Cosmos Containers
 

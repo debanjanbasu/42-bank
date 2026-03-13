@@ -34,41 +34,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const lastActiveRef = React.useRef<number>(Date.now());
   const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    checkExistingSession();
+  // Clears session state only. Cryptographic keys are intentionally preserved
+  // because they are protected by biometric auth (Keychain/Keystore) and are
+  // needed for transaction signing after re-login. Only explicit logout (which
+  // calls KeyManager.deleteKeys()) performs full key cleanup.
+  const clearAuth = useCallback(async () => {
+    await StorageService.clearAuth();
+    setUser(null);
   }, []);
 
-  const checkExistingSession = async () => {
-    try {
-      const storedUser = await StorageService.getUser();
-      const token = await StorageService.getToken();
-      if (storedUser && token) {
-        const expired = await StorageService.isTokenExpired();
-        if (expired) {
-          const refreshToken = await StorageService.getRefreshToken();
-          if (refreshToken) {
-            try {
-              const newToken = await AuthService.refreshToken(refreshToken);
-              const isNewTokenValid = await AuthService.verifyToken(newToken);
-              if (!isNewTokenValid) {
-                await clearAuth();
-                return;
-              }
-              await StorageService.setToken(newToken);
-              setUser(storedUser);
-            } catch {
-              await clearAuth();
-              return;
-            }
-          } else {
-            await clearAuth();
-            return;
-          }
-        } else {
-          const isValid = await AuthService.verifyToken(token);
-          if (isValid) {
-            setUser(storedUser);
-          } else {
+  useEffect(() => {
+    checkExistingSession();
+    async function checkExistingSession() {
+      try {
+        const storedUser = await StorageService.getUser();
+        const token = await StorageService.getToken();
+        if (storedUser && token) {
+          const expired = await StorageService.isTokenExpired();
+          if (expired) {
             const refreshToken = await StorageService.getRefreshToken();
             if (refreshToken) {
               try {
@@ -82,59 +65,75 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 setUser(storedUser);
               } catch {
                 await clearAuth();
+                return;
               }
             } else {
               await clearAuth();
+              return;
+            }
+          } else {
+            const isValid = await AuthService.verifyToken(token);
+            if (isValid) {
+              setUser(storedUser);
+            } else {
+              const refreshToken = await StorageService.getRefreshToken();
+              if (refreshToken) {
+                try {
+                  const newToken = await AuthService.refreshToken(refreshToken);
+                  const isNewTokenValid = await AuthService.verifyToken(newToken);
+                  if (!isNewTokenValid) {
+                    await clearAuth();
+                    return;
+                  }
+                  await StorageService.setToken(newToken);
+                  setUser(storedUser);
+                } catch {
+                  await clearAuth();
+                }
+              } else {
+                await clearAuth();
+              }
             }
           }
         }
+      } catch (error) {
+        console.error('Session check failed:', error);
+        await clearAuth();
+      } finally {
+        setIsLoading(false);
       }
-    } catch (error) {
-      console.error('Session check failed:', error);
-      await clearAuth();
-    } finally {
-      setIsLoading(false);
     }
-  };
+  }, [clearAuth]);
 
-  // Clears session state only. Cryptographic keys are intentionally preserved
-  // because they are protected by biometric auth (Keychain/Keystore) and are
-  // needed for transaction signing after re-login. Only explicit logout (which
-  // calls KeyManager.deleteKeys()) performs full key cleanup.
-  const clearAuth = async () => {
-    await StorageService.clearAuth();
-    setUser(null);
-  };
+	const resetSessionTimer = useCallback(() => {
+		lastActiveRef.current = Date.now();
+		if (timeoutRef.current) clearTimeout(timeoutRef.current);
+		if (user) {
+			timeoutRef.current = setTimeout(() => {
+				clearAuth();
+			}, SESSION_TIMEOUT_MS);
+		}
+	}, [user, clearAuth]);
 
-  const resetSessionTimer = useCallback(() => {
-    lastActiveRef.current = Date.now();
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    if (user) {
-      timeoutRef.current = setTimeout(() => {
-        clearAuth();
-      }, SESSION_TIMEOUT_MS);
-    }
-  }, [user]);
-
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (state: AppStateStatus) => {
-      if (state === 'active') {
-        const elapsed = Date.now() - lastActiveRef.current;
-        if (elapsed > SESSION_TIMEOUT_MS && user) {
-          clearAuth();
-        } else {
-          resetSessionTimer();
-        }
-      } else if (state === 'background') {
-        lastActiveRef.current = Date.now();
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      }
-    });
-    return () => {
-      subscription.remove();
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    };
-  }, [user, resetSessionTimer]);
+	useEffect(() => {
+		const subscription = AppState.addEventListener('change', (state: AppStateStatus) => {
+			if (state === 'active') {
+				const elapsed = Date.now() - lastActiveRef.current;
+				if (elapsed > SESSION_TIMEOUT_MS && user) {
+					clearAuth();
+				} else {
+					resetSessionTimer();
+				}
+			} else if (state === 'background') {
+				lastActiveRef.current = Date.now();
+				if (timeoutRef.current) clearTimeout(timeoutRef.current);
+			}
+		});
+		return () => {
+			subscription.remove();
+			if (timeoutRef.current) clearTimeout(timeoutRef.current);
+		};
+	}, [user, resetSessionTimer, clearAuth]);
 
   const login = useCallback(async (username: string) => {
     setIsLoading(true);
@@ -198,30 +197,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const logout = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      await KeyManager.deleteKeys();
-      await CacheService.clearAll();
-      await clearAuth();
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+	const logout = useCallback(async () => {
+		setIsLoading(true);
+		try {
+			await KeyManager.deleteKeys();
+			await CacheService.clearAll();
+			await clearAuth();
+		} finally {
+			setIsLoading(false);
+		}
+	}, [clearAuth]);
 
-  const refreshToken = useCallback(async () => {
-    try {
-      const currentRefreshToken = await StorageService.getRefreshToken();
-      if (!currentRefreshToken) {
-        throw new Error('No refresh token');
-      }
-      const newToken = await AuthService.refreshToken(currentRefreshToken);
-      await StorageService.setToken(newToken);
-    } catch (error) {
-      await clearAuth();
-      throw error;
-    }
-  }, []);
+	const refreshToken = useCallback(async () => {
+		try {
+			const currentRefreshToken = await StorageService.getRefreshToken();
+			if (!currentRefreshToken) {
+				throw new Error('No refresh token');
+			}
+			const newToken = await AuthService.refreshToken(currentRefreshToken);
+			await StorageService.setToken(newToken);
+		} catch (error) {
+			await clearAuth();
+			throw error;
+		}
+	}, [clearAuth]);
 
   return (
     <AuthContext.Provider

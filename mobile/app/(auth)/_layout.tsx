@@ -1,4 +1,4 @@
-import { Redirect } from 'expo-router';
+import { Redirect, Slot } from 'expo-router';
 import { ActivityIndicator, View, StyleSheet } from 'react-native';
 import { useAuth } from '@/contexts/AuthContext';
 import { darkTheme } from '@/utils/theme';
@@ -18,7 +18,7 @@ export default function AuthLayout() {
     return <Redirect href="/(tabs)" />;
   }
 
-  return <Redirect href="/(auth)/login" />;
+  return <Slot />;
 }
 
 const styles = StyleSheet.create({

@@ -128,7 +128,7 @@ Run `uv sync` to install all dependencies.
 
 ### Cosmos emulator connection refused
 Start it first: `docker-compose up -d`. Wait 30-60s for it to initialize.  
-Check status: `curl -sk https://localhost:8081/_explorer/index.html`
+Check status: `curl -s http://localhost:1234`
 
 ### Mobile: Metro bundler can't find module
 Run `cd mobile && npm install` to restore node_modules.

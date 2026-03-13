@@ -30,12 +30,12 @@ if ! docker ps --format '{{.Names}}' | grep -q "42bank-cosmos"; then
     echo "Starting Cosmos DB Emulator..."
     docker-compose up -d cosmos-emulator
     echo "Waiting for emulator (up to 60s)..."
-    for i in $(seq 1 60); do
-        if curl -sk https://localhost:8081/_explorer/index.html >/dev/null 2>&1; then break; fi
-        sleep 1
-    done
+	for i in $(seq 1 60); do
+		if curl -s http://localhost:1234 >/dev/null 2>&1; then break; fi
+		sleep 1
+	done
 fi
-if ! curl -sk https://localhost:8081/_explorer/index.html >/dev/null 2>&1; then
+if ! curl -s http://localhost:1234 >/dev/null 2>&1; then
     echo "❌ Cosmos emulator not responding. Check: docker-compose logs cosmos-emulator"
     exit 1
 fi
@@ -68,7 +68,7 @@ fi
 echo ""
 echo "5️⃣  Starting A2A server (port 8000)..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "Cosmos Explorer: https://localhost:1234/_explorer/index.html"
+echo "Cosmos Explorer: http://localhost:1234/"
 echo ""
 export FOUNDRY_LOCAL_ENDPOINT="$FOUNDRY_URL/v1"
 export MODEL_NAME="$MODEL"

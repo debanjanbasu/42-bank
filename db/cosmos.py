@@ -9,8 +9,8 @@ Auth strategy (priority order):
   3. Neither set → localhost emulator defaults (dev fallback)
 
 Local dev:
-  docker-compose up -d   # starts Cosmos emulator at https://localhost:8081/
-  ./dev.sh alice         # sets AZURE_COSMOS_CONNECTION_STRING automatically
+docker-compose up -d # starts Cosmos emulator (API: https://localhost:8081/, UI: http://localhost:1234/)
+./dev.sh alice # sets AZURE_COSMOS_CONNECTION_STRING automatically
 
 Sync client: used only by _init_db() (container creation at startup).
 Async client: used by all data-path operations.
@@ -60,7 +60,9 @@ def _build_async_client() -> AsyncCosmosClient:
     endpoint = os.getenv("COSMOS_ENDPOINT")
     if endpoint:
         return AsyncCosmosClient(
-            endpoint, credential=AsyncDefaultAzureCredential(), consistency_level="Session"
+            endpoint,
+            credential=AsyncDefaultAzureCredential(),
+            consistency_level="Session",
         )
     return AsyncCosmosClient.from_connection_string(
         EMULATOR_CONN_STR, connection_verify=False, consistency_level="Session"
@@ -97,5 +99,7 @@ def get_async_database(db_name: Optional[str] = None) -> AsyncDatabaseProxy:
     return get_async_cosmos_client().get_database_client(db_name)
 
 
-def get_async_container(container_name: str, db_name: Optional[str] = None) -> AsyncContainerProxy:
+def get_async_container(
+    container_name: str, db_name: Optional[str] = None
+) -> AsyncContainerProxy:
     return get_async_database(db_name).get_container_client(container_name)
