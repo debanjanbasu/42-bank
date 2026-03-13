@@ -44,7 +44,7 @@ npx expo start --dev-client
 
 ```bash
 # Terminal 1: Start LLM
-foundry model run qwen2.5-14b-instruct-generic-gpu:4
+foundry model run qwen2.5-14b
 
 # Terminal 2: Start Cosmos emulator + backend
 docker-compose up -d

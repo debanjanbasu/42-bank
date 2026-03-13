@@ -160,7 +160,7 @@ async def a2a_server(mcp_server):
         print(f"Using Foundry at: {foundry_endpoint}")
     except RuntimeError as e:
         raise RuntimeError(
-            f"Foundry not running. Start with: foundry model run qwen2.5-14b-instruct-generic-gpu:4"
+            f"Foundry not running. Start with: foundry model run qwen2.5-14b"
         ) from e
 
     process = subprocess.Popen(

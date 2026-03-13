@@ -20,7 +20,7 @@ brew tap microsoft/foundry && brew install foundry
 
 Then start a model:
 ```bash
-foundry model run qwen2.5-14b-instruct-generic-gpu:4
+foundry model run qwen2.5-14b
 # Wait ~60s for model to load — check: foundry service status
 ```
 
@@ -44,7 +44,7 @@ Docker Desktop is **required** for local development. The Cosmos DB emulator run
 
 **Terminal 1 — Foundry Local (LLM):**
 ```bash
-foundry model run qwen2.5-14b-instruct-generic-gpu:4
+foundry model run qwen2.5-14b
 ```
 
 **Terminal 2 — Backend:**

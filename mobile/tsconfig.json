@@ -2,7 +2,9 @@
   "compilerOptions": {
     "target": "esnext",
     "module": "esnext",
-    "lib": ["esnext"],
+    "lib": [
+      "esnext"
+    ],
     "jsx": "react-native",
     "strict": true,
     "moduleResolution": "bundler",
@@ -12,11 +14,27 @@
     "resolveJsonModule": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"],
-      "react-native-gifted-chat": ["./src/types/react-native-gifted-chat"]
+      "@/*": [
+        "./src/*"
+      ],
+      "react-native-gifted-chat": [
+        "./src/types/react-native-gifted-chat"
+      ]
     },
     "noEmit": true
   },
-  "include": ["app/**/*.ts", "app/**/*.tsx", "src/**/*.ts", "src/**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"],
-  "exclude": ["node_modules", "node_modules/**", "src/**/__tests__/**"]
+  "include": [
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "node_modules/**",
+    "src/**/__tests__/**"
+  ],
+  "extends": "expo/tsconfig.base"
 }

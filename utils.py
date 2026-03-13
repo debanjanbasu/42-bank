@@ -114,7 +114,7 @@ async def get_foundry_local_endpoint_async() -> str:
 
     raise RuntimeError(
         "Foundry Local not running or not responding.\n"
-        "Start with: foundry model run qwen2.5-14b-instruct-generic-gpu:4\n"
+        "Start with: foundry model run qwen2.5-14b\n"
         "Or set FOUNDRY_LOCAL_ENDPOINT environment variable to the endpoint.\n"
         "Check status: foundry service status"
     )
@@ -142,7 +142,7 @@ def create_chat_client(mode: str = "local", model_name: Optional[str] = None):
     """Create chat client for local (Foundry) or hosted (Azure) deployment."""
     if mode == "local":
         endpoint = get_foundry_local_endpoint()
-        model_id = model_name or os.getenv("MODEL_NAME", "qwen2.5-14b-instruct-generic-gpu:4")
+        model_id = model_name or os.getenv("MODEL_NAME", "qwen2.5-14b")
         
         # Create custom AsyncOpenAI client
         async_client = AsyncOpenAI(
@@ -176,7 +176,7 @@ async def create_chat_client_async(mode: str = "local", model_name: Optional[str
     """Async version of create_chat_client — uses async Foundry endpoint discovery."""
     if mode == "local":
         endpoint = await get_foundry_local_endpoint_async()
-        model_id = model_name or os.getenv("MODEL_NAME", "qwen2.5-14b-instruct-generic-gpu:4")
+        model_id = model_name or os.getenv("MODEL_NAME", "qwen2.5-14b")
 
         async_client = AsyncOpenAI(
             api_key="local-dev-key",
@@ -278,7 +278,7 @@ def get_foundry_local_endpoint() -> str:
     
     raise RuntimeError(
         "Foundry Local not running or not responding.\n"
-        "Start with: foundry model run qwen2.5-14b-instruct-generic-gpu:4\n"
+        "Start with: foundry model run qwen2.5-14b\n"
         "Or set FOUNDRY_LOCAL_ENDPOINT environment variable to the endpoint.\n"
         "Check status: foundry service status"
     )

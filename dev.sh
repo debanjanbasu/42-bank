@@ -2,7 +2,7 @@
 set -e
 
 USER="${1:-alice}"
-MODEL="${2:-qwen2.5-14b-instruct-generic-gpu:4}"
+MODEL="${2:-qwen2.5-14b}"
 
 echo "🏦 42 Bank - Local Development"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
