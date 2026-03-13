@@ -1,3 +1,4 @@
+import hashlib
 import os
 import uuid
 from datetime import datetime
@@ -7,6 +8,11 @@ from azure.cosmos import PartitionKey
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 from db.cosmos import get_async_container, get_container, get_database
+
+
+def _make_doc_id(user_token: str, device_id_hash: str) -> str:
+    """Generate a Cosmos DB-safe document ID."""
+    return hashlib.sha256(f"{user_token}:{device_id_hash}".encode()).hexdigest()
 
 
 class APIStorage:
@@ -48,7 +54,7 @@ class APIStorage:
         """
         now = datetime.utcnow().isoformat()
         container = get_async_container("auth_devices")
-        doc_id = f"{user_token}#{device_id_hash}"
+        doc_id = _make_doc_id(user_token, device_id_hash)
         try:
             existing = await container.read_item(item=doc_id, partition_key=user_token)
             registered_at = existing.get("registered_at", now)
@@ -68,7 +74,7 @@ class APIStorage:
     async def remove_device(self, user_token: str, device_id_hash: str) -> None:
         """Remove a registered device by its hashed ID."""
         container = get_async_container("auth_devices")
-        doc_id = f"{user_token}#{device_id_hash}"
+        doc_id = _make_doc_id(user_token, device_id_hash)
         try:
             await container.delete_item(item=doc_id, partition_key=user_token)
         except CosmosResourceNotFoundError:
@@ -76,8 +82,9 @@ class APIStorage:
 
     async def has_device(self, user_token: str, device_id_hash: str) -> bool:
         container = get_async_container("auth_devices")
+        doc_id = _make_doc_id(user_token, device_id_hash)
         try:
-            await container.read_item(item=f"{user_token}#{device_id_hash}", partition_key=user_token)
+            await container.read_item(item=doc_id, partition_key=user_token)
             return True
         except CosmosResourceNotFoundError:
             return False

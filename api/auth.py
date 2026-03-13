@@ -367,9 +367,9 @@ async def get_user_info(user: dict = Depends(get_current_user)):
 @router.post("/logout")
 async def logout(user: dict = Depends(get_current_user)):
     """
-    Logout user from current device.
-    
-    Adds the current JWT to the blacklist so it cannot be reused.
+Logout user from current device.
+
+Adds the current JWT to the blacklist so it cannot be reused.
     """
     jti = user.get("jti", "")
     if jti:
@@ -378,3 +378,62 @@ async def logout(user: dict = Depends(get_current_user)):
         "status": "success",
         "message": "Logged out successfully"
     }
+
+
+class DevLoginRequest(BaseModel):
+    """Development-only login with username."""
+    username: str = Field(..., min_length=3, max_length=50)
+
+
+class DevLoginResponse(BaseModel):
+    """Development login response."""
+    user_id: str
+    username: str
+    token: str
+    refresh_token: str
+    expires_at: str
+    device_id: str
+
+
+@router.post("/dev-login", response_model=DevLoginResponse)
+async def dev_login(request: DevLoginRequest):
+    """
+    Development-only endpoint to login as a test user.
+
+    This endpoint creates a device ID and registers it for the user,
+    allowing login without ML-DSA-44 keys for testing purposes.
+
+    ONLY AVAILABLE IN DEVELOPMENT MODE.
+    """
+    if os.getenv("APP_ENV", "development") not in ("development", "test"):
+        raise HTTPException(403, "This endpoint is only available in development mode")
+
+    ledger = get_ledger()
+
+    user_data = await ledger.get_user_by_username(request.username)
+    if not user_data:
+        raise HTTPException(404, f"User '{request.username}' not found")
+
+    device_id = f"dev-device-{request.username}"
+    device_hash = hash_device_id(device_id)
+
+    await get_api_storage().upsert_device(
+        user_token=user_data.token,
+        device_id_hash=device_hash,
+        device_name=f"Dev Device ({request.username})",
+        biometric_enabled=False,
+        push_token=None,
+    )
+
+    access_token = generate_jwt(user_data.token, user_data.username, device_id)
+    refresh_token = generate_refresh_token(user_data.token, user_data.username, device_id)
+    expires_at = datetime.utcnow() + timedelta(hours=JWT_EXPIRY_HOURS)
+
+    return DevLoginResponse(
+        user_id=user_data.token,
+        username=user_data.username,
+        token=access_token,
+        refresh_token=refresh_token,
+        expires_at=expires_at.isoformat(),
+        device_id=device_id,
+    )

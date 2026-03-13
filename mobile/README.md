@@ -69,7 +69,7 @@ npm install
 cd ios && pod install
 
 # Start metro bundler
-npm start
+npx expo start --dev-client
 
 # Run on iOS
 npm run ios

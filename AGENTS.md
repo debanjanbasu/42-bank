@@ -70,7 +70,7 @@ Docker is **required** for local development. The emulator API runs at `https://
 # Terminal 2: Mobile app
 cd mobile
 npm install
-npm start
+npx expo start --dev-client
 # Press 'i' for iOS, 'a' for Android
 ```
 
@@ -298,7 +298,7 @@ npm run ios
 npm run android
 
 # Start Metro bundler
-npm start
+npx expo start --dev-client
 
 # Type checking
 npm run typecheck
@@ -507,7 +507,7 @@ assert is_transaction_successful(text)
 ### Add New Mobile Screen
 1. Create file in `mobile/app/(tabs)/` or `mobile/app/(auth)/`
 2. Update layout file if needed
-3. Test: `cd mobile && npm start`
+3. Test: `cd mobile && npx expo start --dev-client`
 
 ### Database Changes
 1. Modify schema in `ledger.py` `_init_db()` method (Cosmos container definitions)

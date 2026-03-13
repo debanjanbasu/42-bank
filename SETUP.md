@@ -67,7 +67,7 @@ make install
 ```bash
 cd mobile
 npm install
-npm start
+npx expo start --dev-client
 # Press 'i' for iOS simulator, 'a' for Android emulator
 ```
 

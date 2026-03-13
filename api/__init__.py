@@ -28,6 +28,7 @@ from api.auth import router as auth_router
 from api.deps import limiter, validate_env, validate_jwt_configuration
 from api.keys import router as keys_router
 from api.notifications import router as notifications_router
+from api.accounts import router as accounts_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -112,6 +113,7 @@ async def log_requests(request: Request, call_next):
 app.include_router(auth_router)
 app.include_router(keys_router)
 app.include_router(notifications_router)
+app.include_router(accounts_router)
 
 validate_env()
 

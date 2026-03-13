@@ -16,7 +16,7 @@ export default function TransactionsScreen() {
   const fetchTransactions = useCallback(async () => {
     try {
       setError(null);
-      const data = await APIClient.get<{ transactions: Transaction[] }>('/api/transactions');
+	const data = await APIClient.get<{ transactions: Transaction[] }>('/api/accounts/transactions');
       setTransactions(data.transactions ?? []);
       await CacheService.setTransactions(data.transactions ?? []); // update cache
     } catch (err) {
@@ -64,14 +64,17 @@ export default function TransactionsScreen() {
             accessibilityLabel={isSent ? 'Outgoing transaction' : 'Incoming transaction'}
           />
         </View>
-        <View style={styles.transactionDetails}>
-          <Text style={styles.transactionDescription}>
-            {otherParty || 'Unknown'}
-          </Text>
-          <Text style={styles.transactionDate}>
-            {new Date(item.timestamp).toLocaleDateString()}
-          </Text>
-        </View>
+			<View style={styles.transactionDetails}>
+				<Text style={styles.transactionDescription}>
+					{item.description || 'Transaction'}
+				</Text>
+				<Text style={styles.transactionParty}>
+					{isSent ? `To: ${item.recipient}` : `From: ${item.sender}`}
+				</Text>
+				<Text style={styles.transactionDate}>
+					{new Date(item.timestamp).toLocaleDateString()}
+				</Text>
+			</View>
         <View style={styles.transactionAmount}>
           <Text
             style={[
@@ -163,16 +166,21 @@ const styles = StyleSheet.create({
   transactionDetails: {
     flex: 1,
   },
-  transactionDescription: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: darkTheme.colors.text,
-  },
-  transactionDate: {
-    fontSize: 14,
-    color: darkTheme.colors.textSecondary,
-    marginTop: 2,
-  },
+	transactionDescription: {
+		fontSize: 16,
+		fontWeight: '500',
+		color: darkTheme.colors.text,
+	},
+	transactionParty: {
+		fontSize: 14,
+		color: darkTheme.colors.textSecondary,
+		marginTop: 2,
+	},
+	transactionDate: {
+		fontSize: 14,
+		color: darkTheme.colors.textSecondary,
+		marginTop: 2,
+	},
   transactionAmount: {
     alignItems: 'flex-end',
   },

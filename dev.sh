@@ -64,12 +64,29 @@ else
     echo "✅ MCP server ready (PID: $MCP_PID)"
 fi
 
-# 5. Start A2A server
+# 5. Start Mobile API server
 echo ""
-echo "5️⃣  Starting A2A server (port 8000)..."
+echo "5️⃣ Starting Mobile API (port 8000)..."
+if curl -s http://localhost:8000/api/health >/dev/null 2>&1; then
+	echo "⚠️ Mobile API already running (skipping restart)"
+else
+	uv run uvicorn api:app --host 0.0.0.0 --port 8000 >/tmp/42bank-api.log 2>&1 &
+	API_PID=$!
+	for i in $(seq 1 30); do
+		if curl -s http://localhost:8000/api/health >/dev/null 2>&1; then break; fi
+		sleep 1
+	done
+	echo "✅ Mobile API ready (PID: $API_PID)"
+fi
+
+# 6. Start A2A server
+echo ""
+echo "6️⃣ Starting A2A server (port 8002)..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Cosmos Explorer: http://localhost:1234/"
+echo "Mobile API: http://localhost:8000"
+echo "A2A Server: http://localhost:8002"
 echo ""
 export FOUNDRY_LOCAL_ENDPOINT="$FOUNDRY_URL/v1"
 export MODEL_NAME="$MODEL"
-exec uv run python a2a_server.py --user "$USER"
+exec uv run python a2a_server.py --user "$USER" --port 8002

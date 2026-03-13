@@ -14,13 +14,14 @@ import { StorageService } from '@/services/StorageService';
 import { KeyManager } from '@/services/KeyManager';
 
 interface AuthContextType {
-  user: User | null;
-  isLoading: boolean;
-  isAuthenticated: boolean;
-  login: (username: string) => Promise<void>;
-  register: (username: string) => Promise<void>;
-  logout: () => Promise<void>;
-  refreshToken: () => Promise<void>;
+	user: User | null;
+	isLoading: boolean;
+	isAuthenticated: boolean;
+	login: (username: string) => Promise<void>;
+	devLogin: (username: string) => Promise<void>;
+	register: (username: string) => Promise<void>;
+	logout: () => Promise<void>;
+	refreshToken: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -159,43 +160,78 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const register = useCallback(async (username: string) => {
-    setIsLoading(true);
-    let generatedKeys = false;
-    try {
-      const keyPair = await KeyManager.generateKeyPair();
-      generatedKeys = true;
-      const deviceId = await StorageService.getOrCreateDeviceId();
-      const response = await AuthService.register({
-        username,
-        public_key: keyPair.publicKey,
-        device_id: deviceId,
-        device_name: await StorageService.getDeviceName(),
-      });
-      await StorageService.setUser(response.user);
-      await StorageService.setToken(response.token);
-      await StorageService.setTokenExpiry(response.expires_at);
-      await StorageService.setRefreshToken(response.refresh_token);
-      setUser(response.user);
-      try {
-        const pushToken = await NotificationService.registerForPushNotifications();
-        if (pushToken) {
-          await NotificationService.registerTokenWithServer(pushToken);
-        }
-      } catch (e) {
-        // Non-fatal — app works without push notifications
-        console.warn('Push notification setup failed:', e);
-      }
-    } catch (error) {
-      // Roll back generated keys when registration fails server-side.
-      if (generatedKeys) {
-        await KeyManager.deleteKeys();
-      }
-      throw error;
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+	const register = useCallback(async (username: string) => {
+		setIsLoading(true);
+		let generatedKeys = false;
+		try {
+			console.log('Generating key pair...');
+			const keyPair = await KeyManager.generateKeyPair();
+			console.log('Key pair generated, public key:', keyPair.publicKey.substring(0, 20) + '...');
+			generatedKeys = true;
+			const deviceId = await StorageService.getOrCreateDeviceId();
+			console.log('Device ID:', deviceId);
+			const deviceName = await StorageService.getDeviceName();
+			console.log('Device name:', deviceName);
+			console.log('Calling AuthService.register...');
+			const response = await AuthService.register({
+				username,
+				public_key: keyPair.publicKey,
+				device_id: deviceId,
+				device_name: deviceName,
+			});
+		console.log('Register response:', response);
+		const user: User = {
+			user_id: response.user_id,
+			username: response.username,
+			public_key: response.public_key,
+		};
+		await StorageService.setUser(user);
+		await StorageService.setToken(response.token);
+		await StorageService.setTokenExpiry(response.expires_at);
+		await StorageService.setRefreshToken(response.refresh_token);
+		setUser(user);
+			try {
+				const pushToken = await NotificationService.registerForPushNotifications();
+				if (pushToken) {
+					await NotificationService.registerTokenWithServer(pushToken);
+				}
+			} catch (e) {
+				// Non-fatal — app works without push notifications
+				console.warn('Push notification setup failed:', e);
+			}
+		} catch (error) {
+			console.error('Registration error:', error);
+			// Roll back generated keys when registration fails server-side.
+			if (generatedKeys) {
+				await KeyManager.deleteKeys();
+			}
+			throw error;
+		} finally {
+			setIsLoading(false);
+		}
+	}, []);
+
+	const devLogin = useCallback(async (username: string) => {
+		setIsLoading(true);
+		try {
+			const response = await AuthService.devLogin(username);
+			const user: User = {
+				user_id: response.user_id,
+				username: response.username,
+				public_key: '',
+			};
+			await StorageService.setUser(user);
+			await StorageService.setToken(response.token);
+			await StorageService.setTokenExpiry(response.expires_at);
+			await StorageService.setRefreshToken(response.refresh_token);
+			await StorageService.getOrCreateDeviceId();
+			setUser(user);
+		} catch (error) {
+			throw error;
+		} finally {
+			setIsLoading(false);
+		}
+	}, []);
 
 	const logout = useCallback(async () => {
 		setIsLoading(true);
@@ -222,16 +258,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		}
 	}, [clearAuth]);
 
-  return (
-    <AuthContext.Provider
-      value={{
-        user,
-        isLoading,
-        isAuthenticated: !!user,
-        login,
-        register,
-        logout,
-        refreshToken,
+	return (
+		<AuthContext.Provider
+			value={{
+				user,
+				isLoading,
+				isAuthenticated: !!user,
+				login,
+				devLogin,
+				register,
+				logout,
+				refreshToken,
       }}
     >
       {children}

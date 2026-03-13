@@ -56,11 +56,41 @@ class Product(BaseModel):
 
 
 _SEED_PRODUCTS = [
-    {"id": "p0", "name": "Standard Checking", "type": "checking", "interest_rate": 0.0, "description": "Default everyday account."},
-    {"id": "p1", "name": "High-Yield Savings", "type": "saving", "interest_rate": 4.5, "description": "Earn 4.5% interest."},
-    {"id": "p2", "name": "Home Mortgage", "type": "mortgage", "interest_rate": 3.8, "description": "30-year fixed rate."},
-    {"id": "p3", "name": "Express Auto Loan", "type": "loan", "interest_rate": 5.9, "description": "Instant car financing."},
-    {"id": "p4", "name": "Infinite Rewards Card", "type": "credit_card", "interest_rate": 15.4, "description": "2% cashback."},
+    {
+        "id": "p0",
+        "name": "Standard Checking",
+        "type": "checking",
+        "interest_rate": 0.0,
+        "description": "Default everyday account.",
+    },
+    {
+        "id": "p1",
+        "name": "High-Yield Savings",
+        "type": "saving",
+        "interest_rate": 4.5,
+        "description": "Earn 4.5% interest.",
+    },
+    {
+        "id": "p2",
+        "name": "Home Mortgage",
+        "type": "mortgage",
+        "interest_rate": 3.8,
+        "description": "30-year fixed rate.",
+    },
+    {
+        "id": "p3",
+        "name": "Express Auto Loan",
+        "type": "loan",
+        "interest_rate": 5.9,
+        "description": "Instant car financing.",
+    },
+    {
+        "id": "p4",
+        "name": "Infinite Rewards Card",
+        "type": "credit_card",
+        "interest_rate": 15.4,
+        "description": "2% cashback.",
+    },
 ]
 
 
@@ -91,13 +121,15 @@ class LedgerEngine:
 
     @staticmethod
     def _doc_to_user(doc: Dict[str, Any]) -> UserAccount:
-        return UserAccount.model_validate({
-            "token": doc["id"],
-            "username": doc["username"],
-            "public_key": doc.get("public_key"),
-            "accounts": doc.get("accounts", {}),
-            "pending_requests": doc.get("pending_requests", []),
-        })
+        return UserAccount.model_validate(
+            {
+                "token": doc["id"],
+                "username": doc["username"],
+                "public_key": doc.get("public_key"),
+                "accounts": doc.get("accounts", {}),
+                "pending_requests": doc.get("pending_requests", []),
+            }
+        )
 
     @staticmethod
     def _user_to_doc(user: UserAccount) -> Dict[str, Any]:
@@ -122,7 +154,6 @@ class LedgerEngine:
         async for item in container.query_items(
             query="SELECT * FROM c WHERE c.id = @token",
             parameters=[{"name": "@token", "value": token}],
-
         ):
             items.append(item)
         return self._doc_to_user(items[0]) if items else None
@@ -136,7 +167,6 @@ class LedgerEngine:
         async for item in container.query_items(
             query="SELECT * FROM c WHERE c.id = @token",
             parameters=[{"name": "@token", "value": token}],
-
         ):
             items.append(item)
         return items[0] if items else None
@@ -152,7 +182,6 @@ class LedgerEngine:
         async for item in container.query_items(
             query="SELECT * FROM c WHERE c.username = @u",
             parameters=[{"name": "@u", "value": username}],
-
         ):
             items.append(item)
         return self._doc_to_user(items[0]) if items else None
@@ -227,12 +256,13 @@ class LedgerEngine:
         async for item in container.query_items(
             query="SELECT c.id FROM c WHERE c.username = @u",
             parameters=[{"name": "@u", "value": username}],
-
         ):
             items.append(item)
         return items[0]["id"] if items else None
 
-    async def _verify_signature(self, token: str, message: str, signature_hex: str) -> bool:
+    async def _verify_signature(
+        self, token: str, message: str, signature_hex: str
+    ) -> bool:
         from pqcrypto.sign.ml_dsa_44 import verify as pq_verify
 
         user = await self._get_user(token)
@@ -286,7 +316,6 @@ class LedgerEngine:
         async for item in users_container.query_items(
             query="SELECT * FROM c WHERE c.username = @u",
             parameters=[{"name": "@u", "value": recipient_username}],
-
         ):
             recipient_docs.append(item)
         if not recipient_docs:
@@ -402,13 +431,15 @@ class LedgerEngine:
             f"{req_user.username}{datetime.now().isoformat()}{amount}".encode()
         ).hexdigest()[:8]
 
-        tar_user.pending_requests.append({
-            "id": req_id,
-            "requester": req_user.username,
-            "amount": amount,
-            "note": note,
-            "timestamp": datetime.now().isoformat(),
-        })
+        tar_user.pending_requests.append(
+            {
+                "id": req_id,
+                "requester": req_user.username,
+                "amount": amount,
+                "note": note,
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
         await self._save_user(tar_user)
         return True
 
@@ -461,7 +492,9 @@ class LedgerEngine:
                             if retry_doc:
                                 retry_user = self._doc_to_user(retry_doc)
                                 retry_user.pending_requests = [
-                                    r for r in retry_user.pending_requests if r["id"] != request_id
+                                    r
+                                    for r in retry_user.pending_requests
+                                    if r["id"] != request_id
                                 ]
                                 await users_container.upsert_item(
                                     body=self._user_to_doc(retry_user)
@@ -490,6 +523,26 @@ class LedgerEngine:
                 )
         return "\n".join(lines)
 
+    async def get_transactions(
+        self, token: str, account_type: str = "checking"
+    ) -> List[Dict[str, Any]]:
+        """Get raw transaction data for API."""
+        user = await self._get_user(token)
+        if not user or account_type not in user.accounts:
+            return []
+        return [
+            {
+                "id": f"tx_{i}",
+                "from": tx.sender,
+                "to": tx.recipient,
+                "amount": tx.amount,
+                "memo": tx.description,
+                "timestamp": tx.timestamp,
+                "status": "completed",
+            }
+            for i, tx in enumerate(user.accounts[account_type].history)
+        ]
+
     async def list_user_accounts(self, token: str) -> str:
         user = await self._get_user(token)
         if not user:
@@ -504,7 +557,6 @@ class LedgerEngine:
         items: list[Dict[str, Any]] = []
         async for item in container.query_items(
             query="SELECT * FROM c",
-
         ):
             items.append(item)
         return [
@@ -526,13 +578,11 @@ class LedgerEngine:
             async for item in container.query_items(
                 query="SELECT * FROM c WHERE c._ts > @ts ORDER BY c._ts ASC",
                 parameters=[{"name": "@ts", "value": last_id}],
-
             ):
                 items.append(item)
         else:
             async for item in container.query_items(
                 query="SELECT * FROM c ORDER BY c._ts ASC",
-
             ):
                 items.append(item)
         return items

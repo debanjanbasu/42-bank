@@ -2,24 +2,27 @@ import { API_URL } from '@/config/env';
 import { User } from '@/types';
 
 export interface RegisterRequest {
-  username: string;
-  public_key: string;
-  device_id: string;
-  device_name?: string;
+	username: string;
+	public_key: string;
+	device_id: string;
+	device_name?: string;
 }
 
 export interface RegisterResponse {
-  user: User;
-  token: string;
-  refresh_token: string;
-  expires_at: string;
+	user_id: string;
+	username: string;
+	token: string;
+	refresh_token: string;
+	expires_at: string;
+	public_key: string;
 }
 
 export interface LoginResponse {
-  user: User;
-  token: string;
-  refresh_token: string;
-  expires_at: string;
+	user_id: string;
+	username: string;
+	token: string;
+	refresh_token: string;
+	expires_at: string;
 }
 
 export class AuthService {
@@ -44,12 +47,15 @@ export class AuthService {
     return response.json();
   }
 
-  static async register(data: RegisterRequest): Promise<RegisterResponse> {
-    return this.request<RegisterResponse>('/api/auth/register', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  }
+	static async register(data: RegisterRequest): Promise<RegisterResponse> {
+		console.log('AuthService.register called with:', { ...data, public_key: data.public_key.substring(0, 20) + '...' });
+		console.log('API_URL:', API_URL);
+		console.log('Full URL:', `${API_URL}/api/auth/register`);
+		return this.request<RegisterResponse>('/api/auth/register', {
+			method: 'POST',
+			body: JSON.stringify(data),
+		});
+	}
 
   static async login(
     username: string,
@@ -89,12 +95,19 @@ export class AuthService {
     });
   }
 
-  static async logout(token: string): Promise<void> {
-    await this.request('/api/auth/logout', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-    });
-  }
+	static async logout(token: string): Promise<void> {
+		await this.request('/api/auth/logout', {
+			method: 'POST',
+			headers: { Authorization: `Bearer ${token}` },
+		});
+	}
+
+	static async devLogin(username: string): Promise<LoginResponse & { device_id: string }> {
+		return this.request<LoginResponse & { device_id: string }>('/api/auth/dev-login', {
+			method: 'POST',
+			body: JSON.stringify({ username }),
+		});
+	}
 }
 
 export default AuthService;

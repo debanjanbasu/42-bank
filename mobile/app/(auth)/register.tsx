@@ -33,12 +33,15 @@ export default function RegisterScreen() {
       return;
     }
 
-    setError('');
-    try {
-      await register(username.trim().toLowerCase());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Registration failed');
-    }
+	setError('');
+	try {
+		console.log('Starting registration for:', username.trim().toLowerCase());
+		await register(username.trim().toLowerCase());
+		console.log('Registration successful');
+	} catch (err) {
+		console.error('Registration error:', err);
+		setError(err instanceof Error ? err.message : 'Registration failed');
+	}
   };
 
   return (
