@@ -24,13 +24,13 @@ foundry model run qwen2.5-14b
 # Wait ~60s for model to load — check: foundry service status
 ```
 
-### 3. Install Node.js 20+ (for mobile app)
+### 3. Install Node.js 24+ (for mobile app)
 ```bash
 # macOS
-brew install node@20
+brew install node@24
 
 # Or use nvm: https://github.com/nvm-sh/nvm
-nvm install 20 && nvm use 20
+nvm install 24 && nvm use 24
 ```
 
 ### 4. Docker Desktop (required — for Cosmos DB emulator)
