@@ -199,16 +199,30 @@ class A2AAgentHandler:
         agent_key: str,
         all_agents: Optional[Dict[str, Agent]] = None,  # type: ignore[assignment]
         base_url: str = "http://localhost:8000",
+        mcp_tools=None,
     ):
         self.agent = agent
         self.agent_key = agent_key
         self.all_agents = all_agents or {}
         self.base_url = base_url
+        self.mcp_tools = mcp_tools
 
         # Create httpx async client for A2A routing (only for triage)
         self.http_client = None
         if agent_key == "triage":
             self.http_client = httpx.AsyncClient(timeout=None)
+
+    async def _ensure_mcp_connected(self):
+        """Ensure MCP tools are connected before use."""
+        if (
+            self.mcp_tools
+            and hasattr(self.mcp_tools, "is_connected")
+            and not self.mcp_tools.is_connected
+        ):
+            try:
+                await self.mcp_tools.connect()
+            except Exception:
+                pass  # Will retry on tool call
 
     def get_agent_card(self, base_url: str) -> Dict[str, Any]:
         """Return A2A Agent Card for discovery."""
@@ -277,6 +291,7 @@ class A2AAgentHandler:
                     target_url += ":stream"
 
                 if use_streaming:
+
                     async def forward_stream():
                         async with self.http_client.stream(  # type: ignore[union-attr]
                             "POST",
@@ -472,11 +487,14 @@ async def create_a2a_app(
     # MCPStreamableHTTPTool auto-discovers all tools from the server
     mcp_tools = get_banking_mcp_tools(mcp_server_url)
 
-    # Create specialist agents with MCP tools
-    inquiry_agent = inquiry.get_agent(client, mcp_tools)
-    transaction_agent = transaction.get_agent(client, mcp_tools)
-    advisor_agent = advisor.get_agent(client, mcp_tools)
-    manager_agent = manager.get_agent(client, mcp_tools)
+    # Connect to MCP server to load available tools
+    await mcp_tools.connect()
+
+    # Create specialist agents with MCP tools - pass the functions list
+    inquiry_agent = inquiry.get_agent(client, mcp_tools.functions)
+    transaction_agent = transaction.get_agent(client, mcp_tools.functions)
+    advisor_agent = advisor.get_agent(client, mcp_tools.functions)
+    manager_agent = manager.get_agent(client, mcp_tools.functions)
 
     # Create triage agent WITHOUT tools - it only routes
     triage_agent = triage.get_agent(client, tools=None)
@@ -576,10 +594,19 @@ async def create_a2a_app(
     )
 
     _require_auth = os.getenv("APP_ENV", "development").lower() not in (
-        "development", "dev", "local", "test"
+        "development",
+        "dev",
+        "local",
+        "test",
     )
     middleware = (
-        [Middleware(AuthMiddleware, api_key=api_key, require_auth=require_auth or _require_auth)]
+        [
+            Middleware(
+                AuthMiddleware,
+                api_key=api_key,
+                require_auth=require_auth or _require_auth,
+            )
+        ]
         if api_key or require_auth or _require_auth
         else []
     )
