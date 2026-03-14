@@ -4,18 +4,15 @@ import { GiftedChat, IMessage, Send, InputToolbar, Composer } from 'react-native
 import { IconButton, ActivityIndicator } from 'react-native-paper';
 import { useAuth } from '@/contexts/AuthContext';
 import { useA2A } from '@/hooks/useA2A';
-import { useTransactionSigning } from '@/hooks/useTransactionSigning';
-import { TransactionConfirmModal } from '@/components/TransactionConfirmModal';
 import { darkTheme } from '@/utils/theme';
 
 type GiftedChatProps = React.ComponentProps<typeof GiftedChat>;
 
 export default function ChatScreen() {
-  const { user } = useAuth();
-  const { sendMessage: sendA2AMessage } = useA2A();
-  const { pendingTx, requestSignature, handleConfirm, handleCancel } = useTransactionSigning();
-  const [messages, setMessages] = useState<IMessage[]>([]);
-  const [isStreaming, setIsStreaming] = useState(false);
+const { user } = useAuth();
+const { sendMessage: sendA2AMessage } = useA2A();
+const [messages, setMessages] = useState<IMessage[]>([]);
+const [isStreaming, setIsStreaming] = useState(false);
 
   // Match "send $50 to bob" or "transfer 100 to alice for lunch"
   const extractTransferIntent = (text: string) => {
@@ -40,61 +37,54 @@ export default function ChatScreen() {
     ]);
   }, [user?.username]);
 
-  const onSend = useCallback(
-    async (newMessages: IMessage[] = []) => {
-      const message = newMessages[0];
-      setMessages((previousMessages) =>
-        GiftedChat.append(previousMessages, newMessages)
-      );
+const onSend = useCallback(
+async (newMessages: IMessage[] = []) => {
+const message = newMessages[0];
+setMessages((previousMessages) =>
+GiftedChat.append(previousMessages, newMessages)
+);
 
-      // Intercept transfer-intent messages and require signing
-      const intent = extractTransferIntent(message.text);
-      let messageText = message.text;
-      if (intent) {
-        const sig = await requestSignature(intent);
-        if (!sig) return; // user cancelled
-        messageText = `${message.text} [sig:${sig.slice(0, 16)}...]`;
-      }
-
-      setIsStreaming(true);
-      try {
-        let fullResponse = '';
-        await sendA2AMessage(messageText, (chunk: string, done: boolean) => {
-          fullResponse += chunk;
-          if (done) {
-            const agentMessage: IMessage = {
-              _id: Date.now().toString(),
-              text: fullResponse,
-              createdAt: new Date(),
-              user: {
-                _id: 'agent',
-                name: '42-Bank AI',
-              },
-            };
-            setMessages((previousMessages) =>
-              GiftedChat.append(previousMessages, [agentMessage])
-            );
-            setIsStreaming(false);
-          }
-        });
-      } catch (error) {
-        const errorMessage: IMessage = {
-          _id: Date.now().toString(),
-          text: '❌ Sorry, I encountered an error. Please try again.',
-          createdAt: new Date(),
-          user: {
-            _id: 'system',
-            name: 'System',
-          },
-        };
-        setMessages((previousMessages) =>
-          GiftedChat.append(previousMessages, [errorMessage])
-        );
-        setIsStreaming(false);
-      }
-    },
-    [sendA2AMessage, requestSignature],
-  );
+// Send message directly to A2A agent
+// Backend handles transaction execution via session-based auth
+setIsStreaming(true);
+try {
+let fullResponse = '';
+await sendA2AMessage(message.text, (chunk: string, done: boolean) => {
+fullResponse += chunk;
+if (done) {
+const agentMessage: IMessage = {
+_id: Date.now().toString(),
+text: fullResponse,
+createdAt: new Date(),
+user: {
+_id: 'agent',
+name: '42-Bank AI',
+},
+};
+setMessages((previousMessages) =>
+GiftedChat.append(previousMessages, [agentMessage])
+);
+setIsStreaming(false);
+}
+});
+} catch (error) {
+const errorMessage: IMessage = {
+_id: Date.now().toString(),
+text: '❌ Sorry, I encountered an error. Please try again.',
+createdAt: new Date(),
+user: {
+_id: 'system',
+name: 'System',
+},
+};
+setMessages((previousMessages) =>
+GiftedChat.append(previousMessages, [errorMessage])
+);
+setIsStreaming(false);
+}
+},
+[sendA2AMessage],
+);
 
   const renderSend = (props: any) => (
     <Send {...props} containerStyle={styles.sendContainer} disabled={isStreaming}>
@@ -123,32 +113,24 @@ export default function ChatScreen() {
     />
   );
 
-  return (
-    <View style={styles.container}>
-      <GiftedChat
-        messages={messages}
-        onSend={onSend}
-        user={{
-          _id: user?.user_id || 'anonymous',
-          name: user?.username || 'User',
-        }}
-        isTyping={isStreaming}
-        renderSend={renderSend}
-        renderInputToolbar={renderInputToolbar}
-        renderComposer={renderComposer}
-        messagesContainerStyle={styles.messagesContainer}
-      />
-      {Platform.OS === 'android' && <KeyboardAvoidingView behavior="padding" />}
-      <TransactionConfirmModal
-        visible={!!pendingTx}
-        recipient={pendingTx?.recipient ?? ''}
-        amount={pendingTx?.amount ?? 0}
-        note={pendingTx?.note ?? ''}
-        onConfirm={handleConfirm}
-        onCancel={handleCancel}
-      />
-    </View>
-  );
+return (
+<View style={styles.container}>
+<GiftedChat
+messages={messages}
+onSend={onSend}
+user={{
+_id: user?.user_id || 'anonymous',
+name: user?.username || 'User',
+}}
+isTyping={isStreaming}
+renderSend={renderSend}
+renderInputToolbar={renderInputToolbar}
+renderComposer={renderComposer}
+messagesContainerStyle={styles.messagesContainer}
+/>
+{Platform.OS === 'android' && <KeyboardAvoidingView behavior="padding" />}
+</View>
+);
 }
 
 const styles = StyleSheet.create({

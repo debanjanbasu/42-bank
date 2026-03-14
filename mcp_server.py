@@ -105,8 +105,8 @@ async def send_money(to: str, amount: float, note: str) -> str:
         return "ERROR: Service not initialized"
 
     # Validate inputs
-    if not to or not note:
-        return "FAILED: Recipient username and note are required."
+    if not to:
+            return "FAILED: Recipient username is required."
     if amount <= 0:
         return "FAILED: Amount must be positive."
     if amount > 1_000_000:

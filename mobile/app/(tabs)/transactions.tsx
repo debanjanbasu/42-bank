@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, FlatList } from 'react-native';
+import { View, StyleSheet, FlatList, RefreshControl } from 'react-native';
 import { Text, ActivityIndicator, IconButton } from 'react-native-paper';
 import { useAuth } from '@/contexts/AuthContext';
 import { darkTheme } from '@/utils/theme';
@@ -8,30 +8,37 @@ import { APIClient } from '@/services/APIClient';
 import { CacheService } from '@/services/CacheService';
 
 export default function TransactionsScreen() {
-  const { user } = useAuth();
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+const { user } = useAuth();
+const [transactions, setTransactions] = useState<Transaction[]>([]);
+const [isLoading, setIsLoading] = useState(true);
+const [isRefreshing, setIsRefreshing] = useState(false);
+const [error, setError] = useState<string | null>(null);
 
-  const fetchTransactions = useCallback(async () => {
-    try {
-      setError(null);
-	const data = await APIClient.get<{ transactions: Transaction[] }>('/api/accounts/transactions');
-      setTransactions(data.transactions ?? []);
-      await CacheService.setTransactions(data.transactions ?? []); // update cache
-    } catch (err) {
-      // Network error — try cache
-      const cached = await CacheService.getTransactions();
-      if (cached) {
-        setTransactions(cached);
-        setError('Showing cached data (offline)');
-      } else {
-        setError(err instanceof Error ? err.message : 'Failed to load transactions');
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  }, []); // stable — APIClient has no external deps
+const fetchTransactions = useCallback(async (isRefresh = false) => {
+try {
+setError(null);
+if (isRefresh) setIsRefreshing(true);
+const data = await APIClient.get<{ transactions: Transaction[] }>('/api/accounts/transactions');
+setTransactions(data.transactions ?? []);
+await CacheService.setTransactions(data.transactions ?? []); // update cache
+} catch (err) {
+// Network error — try cache
+const cached = await CacheService.getTransactions();
+if (cached) {
+setTransactions(cached);
+setError('Showing cached data (offline)');
+} else {
+setError(err instanceof Error ? err.message : 'Failed to load transactions');
+}
+} finally {
+setIsLoading(false);
+if (isRefresh) setIsRefreshing(false);
+}
+}, []); // stable — APIClient has no external deps
+
+const onRefresh = useCallback(() => {
+fetchTransactions(true);
+}, [fetchTransactions]);
 
   useEffect(() => {
     const loadWithCache = async () => {
@@ -116,26 +123,34 @@ export default function TransactionsScreen() {
     );
   }
 
-  return (
-    <View style={styles.container}>
-      {error ? (
-        <View style={styles.offlineBanner}>
-          <Text style={styles.offlineBannerText}>{error}</Text>
-        </View>
-      ) : null}
-      <FlatList
-        data={transactions}
-        renderItem={renderTransaction}
-        keyExtractor={(item) => item.id + item.timestamp}
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No transactions yet</Text>
-          </View>
-        }
-        contentContainerStyle={styles.listContent}
-      />
-    </View>
-  );
+return (
+<View style={styles.container}>
+{error ? (
+<View style={styles.offlineBanner}>
+<Text style={styles.offlineBannerText}>{error}</Text>
+</View>
+) : null}
+<FlatList
+data={transactions}
+renderItem={renderTransaction}
+keyExtractor={(item) => item.id + item.timestamp}
+ListEmptyComponent={
+<View style={styles.emptyContainer}>
+<Text style={styles.emptyText}>No transactions yet</Text>
+</View>
+}
+contentContainerStyle={styles.listContent}
+refreshControl={
+<RefreshControl
+refreshing={isRefreshing}
+onRefresh={onRefresh}
+tintColor={darkTheme.colors.primary}
+colors={[darkTheme.colors.primary]}
+/>
+}
+/>
+</View>
+);
 }
 
 const styles = StyleSheet.create({

@@ -31,18 +31,23 @@ const handleConfirm = async () => {
 setError(null);
 setIsSigning(true);
 try {
+console.log('Starting transaction authentication...');
 const authenticated = await authenticateForTransaction(
 `Authorize transfer of $${amount.toFixed(2)} to ${recipient}`,
 );
 if (!authenticated) {
+console.log('Authentication failed or cancelled');
 setError('Authentication failed. Please try again or use passcode.');
 return;
 }
 
 const payload = `${recipient}:${amount}:${note}`;
+console.log('Signing payload:', payload);
 const signature = await KeyManager.sign(payload);
+console.log('Signature successful, calling onConfirm');
 onConfirm(signature);
 } catch (e) {
+console.error('Transaction error:', e);
 const errorMessage = e instanceof Error ? e.message : 'Signing failed';
 // Check if it's a missing key error and provide helpful message
 if (errorMessage.includes('Private key not found')) {
