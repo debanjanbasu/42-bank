@@ -2,7 +2,7 @@
 set -e
 
 USER="${1:-alice}"
-MODEL="${2:-qwen2.5-14b}"
+MODEL="${2:-qwen2.5-1.5b}"
 
 echo "🏦 42 Bank - Local Development"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -10,76 +10,85 @@ echo "User: $USER | Model: $MODEL"
 echo ""
 
 # 1. Foundry Local
-echo "1️⃣  Checking Foundry Local..."
+echo "1️⃣ Checking Foundry Local..."
 FOUNDRY_URL=$(foundry service status 2>/dev/null | grep -oE 'http://[^/]+' | head -1)
 if [ -z "$FOUNDRY_URL" ] || ! curl -s "$FOUNDRY_URL/v1/models" >/dev/null 2>&1; then
-    echo "❌ Foundry Local is not running. Start it with:"
-    echo "   foundry model run $MODEL"
-    exit 1
+	echo "⚠️ Foundry Local not responding. Starting model: $MODEL"
+	foundry model run "$MODEL" &
+	FOUNDRY_PID=$!
+	for i in $(seq 1 90); do
+		FOUNDRY_URL=$(foundry service status 2>/dev/null | grep -oE 'http://[^/]+' | head -1)
+		if [ -n "$FOUNDRY_URL" ] && curl -s "$FOUNDRY_URL/v1/models" >/dev/null 2>&1; then
+			break
+		fi
+		sleep 1
+	done
+	if [ -z "$FOUNDRY_URL" ]; then
+		echo "❌ Foundry Local failed to start"
+		exit 1
+	fi
+	echo "✅ Foundry Local: $FOUNDRY_URL"
+else
+	echo "✅ Foundry Local: $FOUNDRY_URL"
 fi
-echo "✅ Foundry Local: $FOUNDRY_URL"
 
-# 2. Cosmos DB Emulator (required)
+# 2. Cosmos DB
 echo ""
-echo "2️⃣  Checking Cosmos DB Emulator..."
+echo "2️⃣ Checking Cosmos DB Emulator..."
 if ! docker info >/dev/null 2>&1; then
-    echo "❌ Docker is not running. Start Docker Desktop and retry."
-    exit 1
+	echo "❌ Docker not running"
+	exit 1
 fi
 if ! docker ps --format '{{.Names}}' | grep -q "42bank-cosmos"; then
-    echo "Starting Cosmos DB Emulator..."
-    docker-compose up -d cosmos-emulator
-    echo "Waiting for emulator (up to 60s)..."
+	docker-compose up -d cosmos-emulator
 	for i in $(seq 1 60); do
 		if curl -s http://localhost:1234 >/dev/null 2>&1; then break; fi
 		sleep 1
 	done
 fi
 if ! curl -s http://localhost:1234 >/dev/null 2>&1; then
-    echo "❌ Cosmos emulator not responding. Check: docker-compose logs cosmos-emulator"
-    exit 1
+	echo "❌ Cosmos emulator not responding"
+	exit 1
 fi
-echo "✅ Cosmos DB Emulator ready"
+echo "✅ Cosmos DB ready"
 
-# 3. Seed database
+# 3. Bootstrap
+echo ""
+echo "3️⃣ Seeding database..."
 export AZURE_COSMOS_CONNECTION_STRING="AccountEndpoint=https://localhost:8081/;AccountKey=C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="
 export COSMOS_DATABASE="banking"
-echo ""
-echo "3️⃣  Seeding database..."
 uv run python bootstrap.py
 echo "✅ Database ready"
 
-# 4. Start MCP server
+# 4. MCP Server
 echo ""
-echo "4️⃣  Starting MCP server (port 8001)..."
+echo "4️⃣ Starting MCP server (port 8001)..."
 if curl -s http://localhost:8001/health >/dev/null 2>&1; then
-    echo "⚠️  MCP server already running (skipping restart)"
+	echo "⚠️ MCP server already running"
 else
-    uv run python mcp_server.py --http --user "$USER" --port 8001 >/tmp/42bank-mcp.log 2>&1 &
-    MCP_PID=$!
-    for i in $(seq 1 30); do
-        if curl -s http://localhost:8001/health >/dev/null 2>&1; then break; fi
-        sleep 1
-    done
-    echo "✅ MCP server ready (PID: $MCP_PID)"
+	uv run python mcp_server.py --http --user "$USER" --port 8001 >/tmp/42bank-mcp.log 2>&1 &
+	for i in $(seq 1 30); do
+		if curl -s http://localhost:8001/health >/dev/null 2>&1; then break; fi
+		sleep 1
+	done
+	echo "✅ MCP server ready"
 fi
 
-# 5. Start Mobile API server
+# 5. Mobile API
 echo ""
 echo "5️⃣ Starting Mobile API (port 8000)..."
 if curl -s http://localhost:8000/api/health >/dev/null 2>&1; then
-	echo "⚠️ Mobile API already running (skipping restart)"
+	echo "⚠️ Mobile API already running"
 else
 	uv run uvicorn api:app --host 0.0.0.0 --port 8000 >/tmp/42bank-api.log 2>&1 &
-	API_PID=$!
 	for i in $(seq 1 30); do
 		if curl -s http://localhost:8000/api/health >/dev/null 2>&1; then break; fi
 		sleep 1
 	done
-	echo "✅ Mobile API ready (PID: $API_PID)"
+	echo "✅ Mobile API ready"
 fi
 
-# 6. Start A2A server
+# 6. A2A Server
 echo ""
 echo "6️⃣ Starting A2A server (port 8002)..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -89,4 +98,7 @@ echo "A2A Server: http://localhost:8002"
 echo ""
 export FOUNDRY_LOCAL_ENDPOINT="$FOUNDRY_URL/v1"
 export MODEL_NAME="$MODEL"
-exec uv run python a2a_server.py --user "$USER" --port 8002
+echo "Running A2A server..."
+echo ""
+
+uv run python a2a_server.py --user "$USER" --port 8002

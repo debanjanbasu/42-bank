@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, Modal } from 'react-native';
+import { View, StyleSheet, Modal, Linking } from 'react-native';
 import { Text, Button, ActivityIndicator, Surface, Divider } from 'react-native-paper';
 import { darkTheme } from '@/utils/theme';
 import { KeyManager } from '@/services/KeyManager';
 import { authenticateForTransaction } from '@/hooks/useBiometric';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface TransactionConfirmModalProps {
   visible: boolean;
@@ -15,37 +16,48 @@ interface TransactionConfirmModalProps {
 }
 
 export function TransactionConfirmModal({
-  visible,
-  recipient,
-  amount,
-  note,
-  onConfirm,
-  onCancel,
+visible,
+recipient,
+amount,
+note,
+onConfirm,
+onCancel,
 }: TransactionConfirmModalProps) {
-  const [isSigning, setIsSigning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+const [isSigning, setIsSigning] = useState(false);
+const [error, setError] = useState<string | null>(null);
+const { logout } = useAuth();
 
-  const handleConfirm = async () => {
-    setError(null);
-    setIsSigning(true);
-    try {
-      const authenticated = await authenticateForTransaction(
-        `Authorize transfer of $${amount.toFixed(2)} to ${recipient}`,
-      );
-      if (!authenticated) {
-        setError('Authentication cancelled');
-        return;
-      }
+const handleConfirm = async () => {
+setError(null);
+setIsSigning(true);
+try {
+const authenticated = await authenticateForTransaction(
+`Authorize transfer of $${amount.toFixed(2)} to ${recipient}`,
+);
+if (!authenticated) {
+setError('Authentication failed. Please try again or use passcode.');
+return;
+}
 
-      const payload = `${recipient}:${amount}:${note}`;
-      const signature = await KeyManager.sign(payload);
-      onConfirm(signature);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Signing failed');
-    } finally {
-      setIsSigning(false);
-    }
-  };
+const payload = `${recipient}:${amount}:${note}`;
+const signature = await KeyManager.sign(payload);
+onConfirm(signature);
+} catch (e) {
+const errorMessage = e instanceof Error ? e.message : 'Signing failed';
+// Check if it's a missing key error and provide helpful message
+if (errorMessage.includes('Private key not found')) {
+setError('No signing key found for this account. You need to register a new account with key generation.');
+} else {
+setError(errorMessage);
+}
+} finally {
+setIsSigning(false);
+}
+};
+
+const handleLogoutAndReregister = async () => {
+await logout();
+};
 
   return (
     <Modal
@@ -84,9 +96,21 @@ export function TransactionConfirmModal({
             🔐 This transaction will be signed with your ML-DSA-44 key
           </Text>
 
-          {error ? (
-            <Text style={styles.error}>{error}</Text>
-          ) : null}
+{error ? (
+<View style={styles.errorContainer}>
+<Text style={styles.error}>{error}</Text>
+{error.includes('No signing key found') && (
+<Button
+mode="outlined"
+onPress={handleLogoutAndReregister}
+style={styles.logoutButton}
+size="small"
+>
+Log Out & Register New Account
+</Button>
+)}
+</View>
+) : null}
 
           {isSigning ? (
             <ActivityIndicator style={styles.spinner} />
@@ -136,6 +160,8 @@ const styles = StyleSheet.create({
   amount: { color: darkTheme.colors.primary, fontWeight: 'bold' },
   securityNote: { color: darkTheme.colors.onSurfaceVariant, textAlign: 'center', marginBottom: 16 },
   error: { color: darkTheme.colors.error, textAlign: 'center', marginBottom: 12 },
+errorContainer: { alignItems: 'center', marginBottom: 12 },
+logoutButton: { marginTop: 8 },
   spinner: { marginVertical: 16 },
   buttons: { flexDirection: 'row', gap: 12, marginTop: 8 },
   cancelButton: { flex: 1 },

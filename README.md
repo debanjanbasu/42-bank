@@ -18,7 +18,7 @@ A **quantum-safe multi-agent banking platform** with mobile-first design, featur
 - 🔔 **Push Notifications** - Real-time transaction alerts
 
 ### Cloud Backend
-- ☁️ **Azure AI Foundry** - Qwen3.5-35B-A3B (MoE model)
+- ☁️ **Azure AI Foundry** - Model Router (pre-deployed, dynamically routes to best available model)
 - 💾 **Cosmos DB** - Serverless global database
 - 📊 **Application Insights** - Full observability
 
@@ -44,7 +44,7 @@ npx expo start --dev-client
 
 ```bash
 # Terminal 1: Start LLM
-foundry model run qwen2.5-14b
+foundry model run qwen2.5-1.5b
 
 # Terminal 2: Start Cosmos emulator + backend
 docker-compose up -d
@@ -106,7 +106,7 @@ docker-compose up -d
 │  │      │           │           │           │           │              │  │
 │  │      └───────────┴───────────┴───────────┴───────────┘              │  │
 │  │                              │                                       │  │
-│  │                   Qwen3.5-35B-A3B (3B active params)                │  │
+│ │ Model Router (dynamic routing) │ │
 │  └──────────────────────────────┼──────────────────────────────────────┘  │
 │                                 │                                          │
 │  ┌──────────────────────────────▼──────────────────────────────────────┐  │
@@ -267,7 +267,7 @@ See [AZURE_DEPLOYMENT.md](AZURE_DEPLOYMENT.md) for complete guide.
 |-----------|--------------|
 | Cosmos DB Serverless | $5-15 |
 | Container Apps | $10-30 |
-| Qwen3.5-35B-A3B | $5-20 |
+| Model Router | $5-20 |
 | Notification Hubs | $0-5 |
 | **Total** | **$20-70/month** |
 
@@ -406,7 +406,7 @@ npm run test:e2e
 - **Python 3.10+** - FastAPI, Pydantic, Azure SDK
 - **Agent Framework** - Microsoft Agent Framework
 - **Database** - Azure Cosmos DB (emulator for local dev)
-- **AI Model** - Qwen3.5-35B-A3B (Azure AI Foundry)
+- **AI Model** - Model Router (Azure AI Foundry) - dynamically routes to best available model
 
 ### Mobile
 - **React Native / Expo** - Cross-platform framework

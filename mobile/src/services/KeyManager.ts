@@ -74,10 +74,26 @@ export class KeyManager {
 		return publicKey !== null;
 	}
 
-	static async deleteKeys(): Promise<void> {
-		await SecureStore.deleteItemAsync(PRIVATE_KEY_KEY);
-		await SecureStore.deleteItemAsync(PUBLIC_KEY_KEY);
-	}
+static async deleteKeys(): Promise<void> {
+await SecureStore.deleteItemAsync(PRIVATE_KEY_KEY);
+await SecureStore.deleteItemAsync(PUBLIC_KEY_KEY);
+}
+
+static async importKeys(publicKey: string, privateKey: string): Promise<void> {
+// Validate keys
+if (!publicKey || !privateKey) {
+throw new Error('Invalid keys provided');
+}
+
+// Store the keys
+await SecureStore.setItemAsync(PRIVATE_KEY_KEY, privateKey, {
+keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+});
+
+await SecureStore.setItemAsync(PUBLIC_KEY_KEY, publicKey, {
+keychainAccessible: SecureStore.WHEN_UNLOCKED,
+});
+}
 
 	private static readonly BASE64_CHARS =
 		'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';

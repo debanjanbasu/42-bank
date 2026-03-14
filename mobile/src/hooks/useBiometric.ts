@@ -60,18 +60,20 @@ export function useBiometric() {
 }
 
 export async function authenticateForTransaction(description: string): Promise<boolean> {
-  const compatible = await LocalAuthentication.hasHardwareAsync();
-  const enrolled = await LocalAuthentication.isEnrolledAsync();
-  if (!compatible || !enrolled) return false;
+const compatible = await LocalAuthentication.hasHardwareAsync();
+const enrolled = await LocalAuthentication.isEnrolledAsync();
+if (!compatible || !enrolled) return false;
 
-  try {
-    const result = await LocalAuthentication.authenticateAsync({
-      promptMessage: description,
-      cancelLabel: 'Cancel',
-      disableDeviceFallback: true,
-    });
-    return result.success;
-  } catch {
-    return false;
-  }
+try {
+const result = await LocalAuthentication.authenticateAsync({
+promptMessage: description,
+cancelLabel: 'Cancel',
+disableDeviceFallback: false, // Allow passcode fallback
+fallbackLabel: 'Use Passcode',
+});
+return result.success;
+} catch (error) {
+console.error('Transaction authentication error:', error);
+return false;
+}
 }

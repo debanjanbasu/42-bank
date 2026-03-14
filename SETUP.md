@@ -20,9 +20,11 @@ brew tap microsoft/foundry && brew install foundry
 
 Then start a model:
 ```bash
-foundry model run qwen2.5-14b
+foundry model run qwen2.5-1.5b  # Lightweight model for older laptops
 # Wait ~60s for model to load — check: foundry service status
 ```
+
+> **Note**: Production uses the Model Router endpoint configured via `AZURE_AI_PROJECT_ENDPOINT` and `AZURE_AI_MODEL_DEPLOYMENT_NAME`.
 
 ### 3. Install Node.js 24+ (for mobile app)
 ```bash
@@ -44,7 +46,7 @@ Docker Desktop is **required** for local development. The Cosmos DB emulator run
 
 **Terminal 1 — Foundry Local (LLM):**
 ```bash
-foundry model run qwen2.5-14b
+foundry model run qwen2.5-1.5b
 ```
 
 **Terminal 2 — Backend:**
@@ -82,8 +84,8 @@ Copy `.env.example` to `.env` and configure:
 | `JWT_SECRET` | Yes (local) | Random string ≥32 chars for JWT signing |
 | `APP_ENV` | No | `development` (default), `staging`, `production` |
 | `FOUNDRY_LOCAL_ENDPOINT` | No | Override Foundry endpoint auto-discovery |
-| `AZURE_AI_PROJECT_ENDPOINT` | Production | Azure AI Foundry project URL |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Production | Model deployment name |
+| `AZURE_AI_PROJECT_ENDPOINT` | Production | Model router endpoint (e.g., `https://42-bank-us-east-2-resource.cognitiveservices.azure.com/`) |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Production | Model deployment name (e.g., `model-router`) |
 | `AZURE_COSMOS_CONNECTION_STRING` | Local dev only | Set automatically by `dev.sh` (emulator key auth) |
 | `COSMOS_ENDPOINT` | Production | Cosmos account URL — managed identity auth, no key needed |
 | `COSMOS_DATABASE` | Auto-set by dev.sh | Cosmos database name (default: `banking`) |

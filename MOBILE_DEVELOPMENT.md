@@ -41,6 +41,36 @@ npx expo start --dev-client
 - ✅ Install via QR code or USB
 - ✅ No App Store needed
 
+### Development Workflow: Importing Keys
+
+When developing with pre-existing backend accounts (e.g., `alice`, `bob`), you need to import their cryptographic keys into the mobile app to enable transaction signing.
+
+**Why this is needed:** The bootstrap script creates users with ML-DSA-44 keys stored in `data/keys/`, but these keys are not automatically synced to mobile devices. The mobile app requires these keys to sign transactions.
+
+**Solution 1: Import Existing Keys (Recommended)**
+
+1. **Generate key import data:**
+   ```bash
+   python3 generate_mobile_keys.py
+   ```
+   This outputs JSON for both `alice` and `bob`.
+
+2. **In the mobile app:**
+   - Go to **Settings** tab
+   - Tap **"Import Keys"**
+   - Paste the JSON for your user (e.g., `alice`)
+   - Tap **"Import"**
+
+3. **Now you can send transactions!**
+
+**Solution 2: Register New Account**
+
+Alternatively, register a new account from the mobile app (which generates fresh keys), but this won't have the pre-loaded balance from the bootstrap script.
+
+**Solution 3: Delete and Re-create Users**
+
+Delete existing users from Cosmos DB and re-register from the mobile app to generate new keys with the same usernames.
+
 ### Option 3: Physical Device with Native Build
 
 ```bash
@@ -87,11 +117,12 @@ npx expo run:android --device
                             │ A2A Protocol (HTTPS)
                             ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│ 42-Bank Backend (Azure)                                         │
-│  • API: /api/auth/* - Authentication                           │
-│  • API: /api/keys/* - Key management                           │
-│  • API: /api/notifications/* - Push notifications              │
-│  • A2A: /a2a/* - Agent communication                           │
+│ 42-Bank Backend (Azure) │
+│ • API: /api/auth/* - Authentication │
+│ • API: /api/keys/* - Key management │
+│ • API: /api/notifications/* - Push notifications │
+│ • A2A: /a2a/* - Agent communication │
+│ • Model Router: Dynamic model routing │
 └─────────────────────────────────────────────────────────────────┘
 ```
 

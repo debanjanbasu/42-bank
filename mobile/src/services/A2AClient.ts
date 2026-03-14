@@ -156,60 +156,49 @@ export class A2AClient {
     return response.json();
   }
 
-  /**
-   * Send a message with streaming response (SSE)
-   */
-  async sendMessageStream(
-    agent: string,
-    message: string,
-    onChunk: StreamCallback,
-    onError?: ErrorCallback,
-    contextId?: string
-  ): Promise<void> {
-    const url = `${this.endpoint}/a2a/${agent}/v1/message:stream`;
+	/**
+	 * Send a message - using non-streaming endpoint for reliability
+	 */
+	async sendMessageStream(
+		agent: string,
+		message: string,
+		onChunk: StreamCallback,
+		onError?: ErrorCallback,
+		contextId?: string
+	): Promise<void> {
+		const url = `${this.endpoint}/a2a/${agent}/v1/message`;
 
-    const body = {
-      message: {
-        role: 'user',
-        parts: [{ kind: 'text', text: message }],
-        contextId: contextId || this.generateContextId(),
-      },
-    };
+		const body = {
+			message: {
+				role: 'user',
+				parts: [{ kind: 'text', text: message }],
+				contextId: contextId || this.generateContextId(),
+			},
+		};
 
-    return new Promise((resolve, reject) => {
-      const eventSource = new EventSourcePolyfill(url, {
-        method: 'POST',
-        headers: this.getHeaders(),
-        body: JSON.stringify(body),
-      });
+		try {
+			const response = await fetch(url, {
+				method: 'POST',
+				headers: this.getHeaders(),
+				body: JSON.stringify(body),
+			});
 
-      eventSource.onmessage = (event) => {
-        if (event.data === '[DONE]') {
-          eventSource.close();
-          onChunk('', true);
-          resolve();
-          return;
-        }
+			if (!response.ok) {
+				const errorText = await response.text();
+				throw new Error(`HTTP ${response.status}: ${errorText}`);
+			}
 
-        try {
-          const data = JSON.parse(event.data);
-          const text = this.extractTextFromResponse(data);
-          if (text) {
-            onChunk(text, false);
-          }
-        } catch (e) {
-          // Ignore parse errors for incomplete chunks
-        }
-      };
-
-      eventSource.onerror = (error) => {
-        eventSource.close();
-        const err = new A2AError('Stream connection error', 0);
-        onError?.(err);
-        reject(err);
-      };
-    });
-  }
+			const data = await response.json();
+			const text = this.extractTextFromResponse(data);
+			if (text) {
+				onChunk(text, false);
+			}
+			onChunk('', true); // done
+		} catch (error) {
+			onError?.(error as Error);
+			throw error;
+		}
+	}
 
   /**
    * Get agent card (discovery)

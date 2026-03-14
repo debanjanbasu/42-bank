@@ -1,6 +1,6 @@
-import React from 'react';
-import { View, StyleSheet, ScrollView, Alert } from 'react-native';
-import { Text, Card, List, Switch, Divider, Button } from 'react-native-paper';
+import React, { useState } from 'react';
+import { View, StyleSheet, ScrollView, Alert, TextInput as RNTextInput } from 'react-native';
+import { Text, Card, List, Switch, Divider, Button, Dialog, Portal, TextInput } from 'react-native-paper';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBiometric } from '@/hooks/useBiometric';
@@ -8,10 +8,12 @@ import { KeyManager } from '@/services/KeyManager';
 import { darkTheme } from '@/utils/theme';
 
 export default function SettingsScreen() {
-  const router = useRouter();
-  const { user, logout } = useAuth();
-  const { isAvailable, isEnrolled, biometricType, authenticate } = useBiometric();
-  const [biometricEnabled, setBiometricEnabled] = React.useState(true);
+const router = useRouter();
+const { user, logout } = useAuth();
+const { isAvailable, isEnrolled, biometricType, authenticate } = useBiometric();
+const [biometricEnabled, setBiometricEnabled] = React.useState(true);
+const [importDialogVisible, setImportDialogVisible] = useState(false);
+const [importData, setImportData] = useState('');
 
   const handleLogout = async () => {
     Alert.alert(
@@ -46,13 +48,49 @@ export default function SettingsScreen() {
     }
   };
 
-  const handleKeyBackup = async () => {
-    Alert.alert(
-      'Key Backup',
-      'This feature will allow you to backup your keys to restore on another device. Coming soon!',
-      [{ text: 'OK' }]
-    );
-  };
+const handleKeyBackup = async () => {
+Alert.alert(
+'Key Backup',
+'This feature will allow you to backup your keys to restore on another device. Coming soon!',
+[{ text: 'OK' }]
+);
+};
+
+const handleImportKeys = () => {
+setImportDialogVisible(true);
+};
+
+const confirmImportKeys = async () => {
+try {
+const parsed = JSON.parse(importData);
+if (!parsed.publicKey || !parsed.privateKey) {
+Alert.alert('Invalid Keys', 'The import data is missing required fields.');
+return;
+}
+
+// Store the keys
+await KeyManager.importKeys(parsed.publicKey, parsed.privateKey);
+
+Alert.alert(
+'Success!',
+'Keys imported successfully. You can now use this device for transactions.',
+[
+{
+text: 'OK',
+onPress: () => {
+setImportDialogVisible(false);
+setImportData('');
+},
+},
+]
+);
+} catch (e) {
+Alert.alert(
+'Import Failed',
+e instanceof Error ? e.message : 'Invalid JSON format. Please check your import data.'
+);
+}
+};
 
   const handleDeleteKeys = async () => {
     Alert.alert(
@@ -109,16 +147,27 @@ export default function SettingsScreen() {
             </>
           )}
 
-          <List.Item
-            title="Backup Keys"
-            description="Export encrypted key backup"
-            left={(props) => <List.Icon {...props} icon="cloud-upload" />}
-            onPress={handleKeyBackup}
-            accessible={true}
-            accessibilityLabel="Backup Keys"
-            accessibilityHint="Exports an encrypted backup of your cryptographic keys"
-          />
-          <Divider />
+<List.Item
+title="Import Keys"
+description="Import keys from another device or backend"
+left={(props) => <List.Icon {...props} icon="cloud-download" />}
+onPress={handleImportKeys}
+accessible={true}
+accessibilityLabel="Import Keys"
+accessibilityHint="Imports cryptographic keys from another device or backend"
+/>
+<Divider />
+
+<List.Item
+title="Backup Keys"
+description="Export encrypted key backup"
+left={(props) => <List.Icon {...props} icon="cloud-upload" />}
+onPress={handleKeyBackup}
+accessible={true}
+accessibilityLabel="Backup Keys"
+accessibilityHint="Exports an encrypted backup of your cryptographic keys"
+/>
+<Divider />
 
           <List.Item
             title="Delete Keys"
@@ -175,11 +224,35 @@ export default function SettingsScreen() {
         Logout
       </Button>
 
-      <Text style={styles.footer}>
-        Secured with ML-DSA-44 Quantum-Safe Cryptography
-      </Text>
-    </ScrollView>
-  );
+<Text style={styles.footer}>
+Secured with ML-DSA-44 Quantum-Safe Cryptography
+</Text>
+
+<Portal>
+<Dialog visible={importDialogVisible} onDismiss={() => setImportDialogVisible(false)}>
+<Dialog.Title>Import Keys</Dialog.Title>
+<Dialog.Content>
+<Text style={styles.dialogInfo}>
+Paste the JSON data from your key export file:
+</Text>
+<TextInput
+multiline
+numberOfLines={6}
+mode="outlined"
+placeholder='{"publicKey": "...", "privateKey": "..."}'
+value={importData}
+onChangeText={setImportData}
+style={styles.input}
+/>
+</Dialog.Content>
+<Dialog.Actions>
+<Button onPress={() => setImportDialogVisible(false)}>Cancel</Button>
+<Button onPress={confirmImportKeys}>Import</Button>
+</Dialog.Actions>
+</Dialog>
+</Portal>
+</ScrollView>
+);
 }
 
 const styles = StyleSheet.create({
@@ -208,10 +281,19 @@ const styles = StyleSheet.create({
     marginTop: 16,
     marginBottom: 16,
   },
-  footer: {
-    textAlign: 'center',
-    color: darkTheme.colors.textSecondary,
-    fontSize: 12,
-    marginBottom: 32,
-  },
+footer: {
+textAlign: 'center',
+color: darkTheme.colors.textSecondary,
+fontSize: 12,
+marginBottom: 32,
+},
+dialogInfo: {
+fontSize: 14,
+color: darkTheme.colors.textSecondary,
+marginBottom: 8,
+},
+input: {
+marginTop: 8,
+minHeight: 100,
+},
 });

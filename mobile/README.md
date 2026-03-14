@@ -44,7 +44,7 @@ React Native / Flutter mobile app for 42-Bank, featuring on-device AI integratio
 ┌─────────────────────────────────────────────────┐
 │ 42-Bank Cloud (Azure)                           │
 │ • Triage/Inquiry/Transaction Agents             │
-│ • Qwen3.5-35B-A3B (MoE)                         │
+│ • Model Router (dynamic routing) │
 │ • Cosmos DB                                     │
 └─────────────────────────────────────────────────┘
 ```
@@ -77,6 +77,25 @@ npm run ios
 # Run on Android
 npm run android
 ```
+
+### Importing Keys for Existing Users
+
+If you have existing backend accounts (e.g., `alice`, `bob`) created via the bootstrap script, you need to import their keys:
+
+1. **Generate import data** (from backend):
+   ```bash
+   python3 generate_mobile_keys.py
+   ```
+
+2. **In the mobile app**:
+   - Go to **Settings** tab
+   - Tap **"Import Keys"**
+   - Paste the JSON output
+   - Tap **"Import"**
+
+3. **Test**: You can now send transactions!
+
+> **Note**: If you register a new account directly from the mobile app, keys are automatically generated and no import is needed.
 
 ### Configuration
 

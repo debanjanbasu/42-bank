@@ -42,6 +42,7 @@ def test_db():
     import ledger as ledger_mod
     import api.storage as storage_mod
     import db.cosmos as cosmos_mod
+
     ledger_mod._ledger_instance = None
     storage_mod._storage_instance = None
     # Reset Cosmos client so it re-reads connection string
@@ -73,7 +74,9 @@ def test_db():
     storage_mod._storage_instance = None
     cosmos_mod._cosmos_client = None
     try:
-        cosmos = CosmosClient.from_connection_string(EMULATOR_CONN_STR, connection_verify=False)
+        cosmos = CosmosClient.from_connection_string(
+            EMULATOR_CONN_STR, connection_verify=False
+        )
         cosmos.delete_database(db_name)
     except Exception:
         pass
@@ -160,7 +163,7 @@ async def a2a_server(mcp_server):
         print(f"Using Foundry at: {foundry_endpoint}")
     except RuntimeError as e:
         raise RuntimeError(
-            f"Foundry not running. Start with: foundry model run qwen2.5-14b"
+            f"Foundry not running. Start with: foundry model run qwen2.5-1.5b"
         ) from e
 
     process = subprocess.Popen(
@@ -249,6 +252,7 @@ def extract_text(response_data):
             text += part.get("text", "")
 
     import re
+
     text = re.sub(r"<tool_call>.*?</tool_call>", "", text, flags=re.DOTALL)
     return text.strip()
 

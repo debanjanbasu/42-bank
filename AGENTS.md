@@ -74,6 +74,36 @@ npx expo start --dev-client
 # Press 'i' for iOS, 'a' for Android
 ```
 
+### Development Workflow: Importing Keys for Existing Users
+
+When developing with pre-existing backend accounts (e.g., `alice`, `bob`), you need to import their cryptographic keys into the mobile app to enable transaction signing.
+
+**Why this is needed:** The bootstrap script creates users with ML-DSA-44 keys stored in `data/keys/`, but these keys are not automatically synced to mobile devices. The mobile app requires these keys to sign transactions.
+
+**Solution 1: Import Existing Keys (Recommended)**
+
+1. **Generate key import data:**
+   ```bash
+   python3 generate_mobile_keys.py
+   ```
+   This outputs JSON for both `alice` and `bob`.
+
+2. **In the mobile app:**
+   - Go to **Settings** tab
+   - Tap **"Import Keys"**
+   - Paste the JSON for your user (e.g., `alice`)
+   - Tap **"Import"**
+
+3. **Now you can send transactions!**
+
+**Solution 2: Register New Account**
+
+Alternatively, register a new account from the mobile app (which generates fresh keys), but this won't have the pre-loaded balance from the bootstrap script.
+
+**Solution 3: Delete and Re-create Users**
+
+Delete existing users from Cosmos DB and re-register from the mobile app to generate new keys with the same usernames.
+
 ### Known Issues & Patches
 
 #### react-native-gifted-chat ColorSchemeName Error
@@ -523,8 +553,8 @@ assert is_transaction_successful(text)
 | `AZURE_COSMOS_CONNECTION_STRING` | Cosmos DB connection (local dev only) | `AccountEndpoint=...` (emulator) |
 | `COSMOS_ENDPOINT` | Cosmos account URL (production) | `https://42bank-cosmos.documents.azure.com:443/` |
 | `COSMOS_DATABASE` | Cosmos database name | `banking` (default) |
-| `AZURE_AI_PROJECT_ENDPOINT` | Foundry project | `https://42-bank.cognitiveservices.azure.com/` |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Model deployment | `Qwen3.5-35B-A3B` |
+| `AZURE_AI_PROJECT_ENDPOINT` | Foundry project | `https://42-bank-us-east-2-resource.cognitiveservices.azure.com/` |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Model deployment | `model-router` (routes to configured models) |
 | `JWT_SECRET` | JWT signing key (local dev) | In production: Container Apps encrypted secret |
 | `APP_ENV` | Runtime environment | `development` / `staging` / `production` |
 

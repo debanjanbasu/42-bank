@@ -5,10 +5,11 @@ Complete guide for deploying 42-Bank to Azure AI Foundry with Cosmos DB.
 ## Quick Start
 
 ```bash
-# 1. Deploy 42-Bank infrastructure
+# 1. Deploy 42-Bank infrastructure (if not already deployed)
 az deployment sub create --location eastus --template-file infra/main.bicep
 
-# 2. Deploy Qwen3.5-35B-A3B model via Azure AI Foundry
+# 2. Model Router is pre-deployed - no action needed
+# Verify: az ai model-router show --name model-router --resource-group 42-bank
 
 # 3. Seed database
 export AZURE_COSMOS_CONNECTION_STRING="AccountEndpoint=...;AccountKey=..."
@@ -33,7 +34,7 @@ uv run python bootstrap.py
 │  │  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘           │     │
 │  │       └─────────────┴─────────────┴─────────────┘                  │     │
 │  │                           │                                         │     │
-│  │                  Qwen3.5-35B-A3B (MoE)                             │     │
+│ │ Model Router (dynamic routing) │ │
 │  └───────────────────────────┼────────────────────────────────────────┘     │
 │                              │ MCP Protocol                                 │
 │  ┌───────────────────────────▼────────────────────────────────────────┐     │
@@ -120,26 +121,53 @@ If you prefer the Azure portal:
 
 ---
 
-## Step 2: Deploy Qwen3.5-35B-A3B Model
+## Step 2: Verify Pre-Deployed Model Router
 
-Deploy the recommended MoE model for banking agents.
+> **Important**: The Model Router is already deployed and configured. Do not recreate it.
 
-### 2.1 Via Azure AI Foundry Portal
+The Model Router provides a unified endpoint that dynamically routes requests to the best available model based on workload, cost, and performance characteristics.
 
-1. Navigate to Models catalog
-2. Search "Qwen3.5-35B-A3B"
-3. Click **Deploy**
-4. Select **Global Standard** deployment
-5. Name: `qwen-35b-moe`
+### 2.1 Verify Model Router Exists
 
-### 2.2 Model Selection Rationale
+```bash
+# Check if model router deployment exists
+az ai model-router show \
+  --name model-router \
+  --resource-group 42-bank \
+  --workspace-name 42-bank
+```
+
+### 2.2 Model Router Configuration (Pre-Configured)
+
+The model router is pre-configured with the following routing strategy:
 
 | Model | Active Params | Cost/Input | Cost/Output | Best For |
 |-------|---------------|------------|-------------|----------|
-| **Qwen3.5-35B-A3B** | 3B | ~$0.02/1M | ~$0.06/1M | **Recommended** - Cheapest MoE |
-| Qwen3.5-27B | 27B | ~$0.10/1M | ~$0.30/1M | Latency-sensitive, best IFEval |
-| GPT-4o-mini | - | $0.15/1M | $0.60/1M | OpenAI ecosystem |
-| Qwen3.5-122B-A10B | 10B | ~$0.05/1M | ~$0.15/1M | Highest capability |
+| **Qwen3.5-35B-A3B** | 3B | ~$0.02/1M | ~$0.06/1M | **Default** - Cheapest MoE for banking |
+| Qwen3.5-27B | 27B | ~$0.10/1M | ~$0.30/1M | Latency-sensitive queries |
+| GPT-4o-mini | - | $0.15/1M | $0.60/1M | Complex reasoning |
+| Qwen3.5-122B-A10B | 10B | ~$0.05/1M | ~$0.15/1M | High-capability tasks |
+
+### 2.3 Model Router Benefits
+
+- **Dynamic Load Balancing**: Automatically distributes requests across models
+- **Cost Optimization**: Routes to most cost-effective model for each query type
+- **Zero Downtime Updates**: Swap models without code changes
+- **Failover**: Automatic retry on different model if one fails
+- **Rate Limit Management**: Distributes load to avoid throttling
+
+### 2.4 Testing Model Router Connectivity
+
+```bash
+# Test the pre-deployed endpoint
+curl -X POST https://42-bank-us-east-2-resource.cognitiveservices.azure.com/openai/deployments/model-router/chat/completions \
+  -H "Authorization: Bearer $AZURE_AI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{"role": "user", "content": "Test"}],
+    "max_tokens": 10
+  }'
+```
 
 ---
 
@@ -221,14 +249,14 @@ az monitor app-insights metrics show \
 |-----------|------|------|
 | Cosmos DB | Serverless | $5-15 |
 | Container Apps | Consumption | $0-10 |
-| Qwen3.5-35B | Pay-per-use | $5-20 |
+| Model Router | Pay-per-use | $5-20 |
 | Storage | LRS | $1-2 |
 | **Total** | | **$11-47/month** |
 
 ### Cost Optimization Tips
 
 1. **Use Serverless Cosmos DB** - No minimum spend
-2. **Qwen3.5-35B-A3B** - 3B active params = cheapest inference
+2. **Model Router** - Automatically routes to most cost-effective model
 3. **Container Apps** - Scale to zero when idle
 4. **Set Budget Alerts** - `az consumption budget create`
 
@@ -267,13 +295,17 @@ docker-compose restart cosmos-emulator
 docker-compose logs cosmos-emulator
 ```
 
-### Model Not Found
+### Model Router Not Found
 
 ```bash
-# List deployments
-az ml online-endpoint list \
+# Verify Model Router exists (should already be deployed)
+az ai model-router show \
+  --name model-router \
   --resource-group 42-bank \
   --workspace-name 42-bank
+
+# If it doesn't exist, contact the infrastructure team - it should already be deployed
+# Do NOT attempt to recreate it during application deployment
 ```
 
 ---
@@ -281,7 +313,7 @@ az ml online-endpoint list \
 ## Next Steps
 
 1. ✅ Deploy 42-Bank infrastructure
-2. ✅ Deploy Qwen3.5-35B-A3B model
+2. ✅ Configure Model Router
 3. ✅ Initialize database
 4. ✅ Create Foundry agents
 5. ✅ Test end-to-end flow
@@ -327,5 +359,5 @@ For disaster recovery incidents, follow your organization's incident response pl
 
 - [Azure AI Foundry Documentation](https://learn.microsoft.com/azure/ai-foundry/)
 - [Cosmos DB Serverless](https://learn.microsoft.com/azure/cosmos-db/serverless)
-- [Qwen3.5 Model Card](https://huggingface.co/Qwen/Qwen3.5-35B-A3B)
+- [Azure AI Model Router Documentation](https://learn.microsoft.com/azure/ai-foundry/model-router)
 - [Azure Container Apps](https://learn.microsoft.com/azure/container-apps/)

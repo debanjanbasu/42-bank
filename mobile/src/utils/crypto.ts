@@ -1,34 +1,29 @@
-import * as Crypto from 'expo-crypto';
+/**
+ * Crypto polyfills for React Native
+ * 
+ * @noble/post-quantum requires Web Crypto API's getRandomValues
+ * This polyfill provides it using expo-crypto
+ */
 
-export async function generateDeviceId(): Promise<string> {
-  const randomBytes = await Crypto.getRandomBytesAsync(16);
-  return Array.from(randomBytes)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
+import * as ExpoCrypto from 'expo-crypto';
+
+// Polyfill crypto.getRandomValues for React Native
+// This MUST be called before any noble-post-quantum operations
+if (typeof global.crypto === 'undefined' || !global.crypto.getRandomValues) {
+  global.crypto = {
+    getRandomValues: <T extends Uint8Array>(buffer: T): T => {
+      const randomBytes = ExpoCrypto.getRandomBytes(buffer.length);
+      buffer.set(randomBytes);
+      return buffer;
+    },
+  } as any;
 }
 
-export async function generateRandomString(length: number = 32): Promise<string> {
-  const bytes = await Crypto.getRandomBytesAsync(length);
-  return Array.from(bytes)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
-    .slice(0, length);
+// TypeScript declarations
+declare global {
+  var crypto: {
+    getRandomValues: <T extends Uint8Array>(buffer: T) => T;
+  };
 }
 
-export async function sha256(data: string): Promise<string> {
-  const digest = await Crypto.digestStringAsync(
-    Crypto.CryptoDigestAlgorithm.SHA256,
-    data
-  );
-  return digest;
-}
-
-export function createSigningPayload(
-  type: 'SEND' | 'REQUEST',
-  recipient: string,
-  amount: number,
-  timestamp: number,
-  nonce: string
-): string {
-  return `${type}|${recipient}|${amount.toFixed(2)}|${timestamp}|${nonce}`;
-}
+export {};
