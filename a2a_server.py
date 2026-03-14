@@ -432,12 +432,6 @@ class A2AAgentHandler:
                 response = await self.agent.run(user_text)
                 response_text = response.text.strip()
 
-                # Strip tool call XML that shouldn't be in final output
-                import re
-
-                response_text = re.sub(
-                    r"<tool_call>.*?</tool_call>", "", response_text, flags=re.DOTALL
-                ).strip()
 
                 if not response_text or response_text == "None":
                     response_text = "I've processed your request."
