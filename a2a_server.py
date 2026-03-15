@@ -203,12 +203,14 @@ class A2AAgentHandler:
         all_agents: Optional[Dict[str, Agent]] = None,  # type: ignore[assignment]
         base_url: str = "http://localhost:8000",
         mcp_tools=None,
+        api_key: Optional[str] = None,
     ):
         self.agent = agent
         self.agent_key = agent_key
         self.all_agents = all_agents or {}
         self.base_url = base_url
         self.mcp_tools = mcp_tools
+        self.api_key = api_key
 
         # Create httpx async client for A2A routing (only for triage)
         self.http_client = None
@@ -296,12 +298,17 @@ class A2AAgentHandler:
 
                 if use_streaming:
 
+                    # Build headers with auth forwarding
+                    forward_headers = {"Content-Type": "application/json"}
+                    if self.api_key:
+                        forward_headers["x-api-key"] = self.api_key
+
                     async def forward_stream():
                         async with self.http_client.stream(  # type: ignore[union-attr]
                             "POST",
                             target_url,
                             json=original_body,
-                            headers={"Content-Type": "application/json"},
+                            headers=forward_headers,
                         ) as target_response:
                             if target_response.status_code != 200:
                                 error_data = {
@@ -335,6 +342,9 @@ class A2AAgentHandler:
                     )
 
                 # Forward the original message
+                forward_headers = {"Content-Type": "application/json"}
+                if self.api_key:
+                    forward_headers["x-api-key"] = self.api_key
                 target_response = await self.http_client.post(  # type: ignore[union-attr]
                     target_url,
                     json=original_body,
@@ -520,7 +530,7 @@ async def create_a2a_app(
     for key, agent in agents.items():
         if key == "triage":
             handlers[key] = A2AAgentHandler(
-                agent, key, all_agents=agents, base_url=base_url
+                agent, key, all_agents=agents, base_url=base_url, api_key=api_key
             )
         else:
             handlers[key] = A2AAgentHandler(agent, key, base_url=base_url)
