@@ -1,20 +1,7 @@
 // Azure deployment for 42-Bank multi-agent banking system
-// 
-// This template creates:
-//   - Azure Cosmos DB account (Serverless)
-//   - Database and containers for banking data
-//   - Storage account for Container Apps
-//   - Container Apps environment + app (system-assigned managed identity)
-//   - Log Analytics + Application Insights
-//
-// No Key Vault — JWT_SECRET stored as Container Apps encrypted secret (free).
-// Cosmos DB access via managed identity data-plane RBAC (no keys).
-//
-// Usage:
-//   az deployment sub create --location eastus --template-file main.bicep \
-//     --parameters jwtSecret=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
+// Simplified for hackathon deployment
 
-targetScope = 'subscription'
+targetScope = 'resourceGroup'
 
 @description('Azure region for all resources')
 param location string = 'eastus'
@@ -25,38 +12,32 @@ param environment string = 'production'
 @description('Cosmos DB account name')
 param cosmosAccountName string = '42bank-cosmos'
 
-@description('JWT secret for token signing (stored as Container Apps encrypted secret)')
+@description('JWT secret for token signing')
 @secure()
 param jwtSecret string
 
-@description('Storage account name (must be globally unique)')
-param storageAccountName string = '42bankstorage${uniqueString(subscription().id, location)}'
+@description('Storage account name')
+param storageAccountName string = '42bank${uniqueString(resourceGroup().id)}'
 
 @description('Container Apps environment name')
 param containerAppsEnvName string = '42bank-env'
 
 @description('Container App name')
-param containerAppName string = '42bank-api'
+param containerAppName string = 'bank42api'
 
-@description('Container image to deploy (e.g. myregistry.azurecr.io/42bank:latest)')
+@description('Container image to deploy')
 param containerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
-// Variables
-var resourceGroupName = '42-bank'
+@description('Container Registry name')
+param acrName string = '42bankacr${uniqueString(resourceGroup().id)}'
+
 var databaseName = 'banking'
-var uniqueSuffix = uniqueString(subscription().id, location)
+var uniqueSuffix = uniqueString(resourceGroup().id)
 
-// ============ Resource Group ============
-// Assumes resource group already exists (created manually or via portal)
-resource rg 'Microsoft.Resources/resourceGroups@2023-07-01' existing = {
-  name: resourceGroupName
-}
-
-// ============ Cosmos DB (Serverless) ============
+// Cosmos DB (Serverless)
 resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2023-11-15' = {
   name: '${cosmosAccountName}-${uniqueSuffix}'
   location: location
-  resourceGroup: rg.name
   kind: 'GlobalDocumentDB'
   properties: {
     databaseAccountOfferType: 'Standard'
@@ -89,7 +70,6 @@ resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2023-11-15' = {
   }
 }
 
-// Database
 resource cosmosDb 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023-11-15' = {
   parent: cosmos
   name: databaseName
@@ -100,7 +80,6 @@ resource cosmosDb 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023-11-15
   }
 }
 
-// Users container
 resource usersContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-11-15' = {
   parent: cosmosDb
   name: 'users'
@@ -108,86 +87,27 @@ resource usersContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/cont
     resource: {
       id: 'users'
       partitionKey: {
-        paths: ['/token']
+        paths: ['/username']
         kind: 'Hash'
-      }
-      indexingPolicy: {
-        indexingMode: 'consistent'
-        includedPaths: [
-          {
-            path: '/username/*'
-          }
-          {
-            path: '/accounts/*'
-          }
-        ]
-        excludedPaths: [
-          {
-            path: '/\"_etag\"/?'
-          }
-        ]
       }
     }
   }
 }
 
-// Transactions container
-resource transactionsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-11-15' = {
+resource changeFeedContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-11-15' = {
   parent: cosmosDb
-  name: 'transactions'
+  name: 'change_feed'
   properties: {
     resource: {
-      id: 'transactions'
+      id: 'change_feed'
       partitionKey: {
-        paths: ['/timestamp']
+        paths: ['/event_type']
         kind: 'Hash'
-      }
-      indexingPolicy: {
-        indexingMode: 'consistent'
-        includedPaths: [
-          {
-            path: '/sender/*'
-          }
-          {
-            path: '/recipient/*'
-          }
-          {
-            path: '/timestamp/*'
-          }
-        ]
-      }
-      defaultTtl: -1 // No expiration
-    }
-  }
-}
-
-// Pending requests container
-resource pendingRequestsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-11-15' = {
-  parent: cosmosDb
-  name: 'pending_requests'
-  properties: {
-    resource: {
-      id: 'pending_requests'
-      partitionKey: {
-        paths: ['/request_id']
-        kind: 'Hash'
-      }
-      indexingPolicy: {
-        indexingMode: 'consistent'
-        includedPaths: [
-          {
-            path: '/recipient/*'
-          }
-          {
-            path: '/status/*'
-          }
-        ]
       }
     }
   }
 }
 
-// Products container
 resource productsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-11-15' = {
   parent: cosmosDb
   name: 'products'
@@ -195,18 +115,17 @@ resource productsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/c
     resource: {
       id: 'products'
       partitionKey: {
-        paths: ['/id']
+        paths: ['/type']
         kind: 'Hash'
       }
     }
   }
 }
 
-// ============ Storage Account ============
+// Storage Account
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: storageAccountName
   location: location
-  resourceGroup: rg.name
   sku: {
     name: 'Standard_LRS'
   }
@@ -223,16 +142,66 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   }
 }
 
-// ============ Container Apps Environment ============
+// Container Registry
+resource acr 'Microsoft.ContainerRegistry/registries@2023-01-01-preview' = {
+  name: acrName
+  location: location
+  sku: {
+    name: 'Basic'
+  }
+  properties: {
+    adminUserEnabled: true
+  }
+  tags: {
+    Environment: environment
+    Project: '42-bank'
+  }
+}
+
+// Log Analytics
+resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
+  name: '42bank-logs-${uniqueSuffix}'
+  location: location
+  properties: {
+    sku: {
+      name: 'PerGB2018'
+    }
+    retentionInDays: 90
+    publicNetworkAccessForIngestion: 'Enabled'
+    publicNetworkAccessForQuery: 'Enabled'
+  }
+  tags: {
+    Environment: environment
+    Project: '42-bank'
+  }
+}
+
+// Application Insights
+resource insights 'Microsoft.Insights/components@2020-02-02' = {
+  name: '42bank-insights-${uniqueSuffix}'
+  location: location
+  kind: 'web'
+  properties: {
+    Application_Type: 'web'
+    WorkspaceResourceId: logAnalytics.id
+    publicNetworkAccessForIngestion: 'Enabled'
+    publicNetworkAccessForQuery: 'Enabled'
+  }
+  tags: {
+    Environment: environment
+    Project: '42-bank'
+  }
+}
+
+// Container Apps Environment
 resource containerAppsEnv 'Microsoft.App/managedEnvironments@2023-05-01' = {
   name: containerAppsEnvName
   location: location
-  resourceGroup: rg.name
   properties: {
     appLogsConfiguration: {
       destination: 'log-analytics'
       logAnalyticsConfiguration: {
-        customerId: logAnalytics.properties.workspaceId
+        customerId: logAnalytics.properties.customerId
         sharedKey: logAnalytics.listKeys().primarySharedKey
       }
     }
@@ -243,50 +212,13 @@ resource containerAppsEnv 'Microsoft.App/managedEnvironments@2023-05-01' = {
   }
 }
 
-// ============ Log Analytics ============
-resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
-  name: '42bank-logs-${uniqueSuffix}'
-  location: location
-  resourceGroup: rg.name
-  properties: {
-    sku: {
-      name: 'PerGB2018'
-    }
-    retentionInDays: 90
-    // Ingestion must remain Enabled so agents and Container Apps can write logs
-    publicNetworkAccessForIngestion: 'Enabled'
-    publicNetworkAccessForQuery: 'Enabled'
-  }
-  tags: {
-    Environment: environment
-    Project: '42-bank'
-  }
-}
+// Get ACR credentials
+var acrCredentials = az acr credential show --name acrName --resource-group resourceGroup().name
 
-// ============ Application Insights ============
-resource insights 'Microsoft.Insights/components@2020-02-02' = {
-  name: '42bank-insights-${uniqueSuffix}'
-  location: location
-  resourceGroup: rg.name
-  kind: 'web'
-  properties: {
-    Application_Type: 'web'
-    WorkspaceResourceId: logAnalytics.id
-    // Ingestion must remain Enabled so Application Insights SDK can send telemetry
-    publicNetworkAccessForIngestion: 'Enabled'
-    publicNetworkAccessForQuery: 'Enabled'
-  }
-  tags: {
-    Environment: environment
-    Project: '42-bank'
-  }
-}
-
-// ============ Container App ============
+// Container App
 resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
   name: containerAppName
   location: location
-  resourceGroup: rg.name
   identity: {
     type: 'SystemAssigned'
   }
@@ -300,9 +232,15 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
       }
       secrets: [
         {
-          // Stored encrypted in Container Apps platform — no Key Vault needed
           name: 'jwt-secret'
           value: jwtSecret
+        }
+      ]
+      registries: [
+        {
+          server: acr.properties.loginServer
+          username: 'admin'
+          passwordSecretRef: 'acr-password'
         }
       ]
     }
@@ -312,11 +250,26 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
           name: '42bank-api'
           image: containerImage
           env: [
-            { name: 'COSMOS_ENDPOINT'; value: cosmos.properties.documentEndpoint }
-            { name: 'COSMOS_DATABASE'; value: databaseName }
-            { name: 'APP_ENV'; value: environment }
-            { name: 'JWT_SECRET'; secretRef: 'jwt-secret' }
-            { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'; value: insights.properties.ConnectionString }
+            {
+              name: 'COSMOS_ENDPOINT'
+              value: cosmos.properties.documentEndpoint
+            }
+            {
+              name: 'COSMOS_DATABASE'
+              value: databaseName
+            }
+            {
+              name: 'APP_ENV'
+              value: environment
+            }
+            {
+              name: 'JWT_SECRET'
+              secretRef: 'jwt-secret'
+            }
+            {
+              name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+              value: insights.properties.ConnectionString
+            }
           ]
           resources: {
             cpu: json('0.5')
@@ -336,23 +289,14 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
   }
 }
 
-// ============ RBAC: Managed Identity → Cosmos DB ============
-// "Cosmos DB Built-in Data Contributor" (data-plane role, no key needed)
-resource cosmosRoleAssignment 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-11-15' = {
-  parent: cosmos
-  name: guid(cosmos.id, containerApp.identity.principalId, 'cosmos-data-contributor')
-  properties: {
-    roleDefinitionId: '/${subscription().subscriptionId}/resourceGroups/${resourceGroupName}/providers/Microsoft.DocumentDB/databaseAccounts/${cosmos.name}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
-    principalId: containerApp.identity.principalId
-    scope: cosmos.id
-  }
-}
-
+// Outputs
 output cosmosEndpoint string = cosmos.properties.documentEndpoint
 output cosmosAccountId string = cosmos.id
 output storageAccountName string = storage.name
 output containerAppsEnvironmentId string = containerAppsEnv.id
 output containerAppFqdn string = containerApp.properties.configuration.ingress.fqdn
+output acrName string = acr.name
+output acrLoginServer string = acr.properties.loginServer
 output managedIdentityPrincipalId string = containerApp.identity.principalId
-output logAnalyticsWorkspaceId string = logAnalytics.properties.workspaceId
+output logAnalyticsWorkspaceId string = logAnalytics.properties.customerId
 output applicationInsightsConnectionString string = insights.properties.ConnectionString

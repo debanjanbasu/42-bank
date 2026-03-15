@@ -511,7 +511,7 @@ class LedgerEngine:
             return "No transactions found."
 
         lines = []
-        for tx in history:
+        for tx in reversed(history):  # Most recent first
             is_sender = tx.sender.lower() == user.username.lower()
             if is_sender:
                 lines.append(
@@ -540,7 +540,7 @@ class LedgerEngine:
                 "timestamp": tx.timestamp,
                 "status": "completed",
             }
-            for i, tx in enumerate(user.accounts[account_type].history)
+            for i, tx in enumerate(reversed(user.accounts[account_type].history))  # Most recent first
         ]
 
     async def list_user_accounts(self, token: str) -> str:

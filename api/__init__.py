@@ -1,22 +1,16 @@
 """
-42-Bank Mobile API
+42-Bank API - Consolidated Single-Port Deployment with Integrated A2A
 
-This module provides REST API endpoints for mobile app integration.
-
-Modules:
-    auth - User registration and authentication
-    keys - Key backup and restore
-    notifications - Push notifications
-
-Usage:
-    from api import app
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+This module provides REST API endpoints for mobile app integration
+and integrates A2A server routes directly (no mounting).
 """
 
+import asyncio
 import logging
 import os
 import time
 import uuid as _uuid
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,22 +30,43 @@ logging.basicConfig(
 )
 logger = logging.getLogger("42bank.api")
 
-# Create API app
-validate_jwt_configuration()
 
+# Initialize A2A on startup using lifespan
+@asynccontextmanager
+async def lifespan(fastapi_app: FastAPI):
+    """Initialize A2A on startup."""
+    logger.info("🚀 Starting FastAPI lifespan...")
+    # Initialize A2A synchronously on startup
+    success = await initialize_a2a()
+    if not success:
+        logger.error("❌ A2A initialization failed on startup")
+    logger.info(f"✅ Lifespan complete, A2A initialized: {success}")
+
+    # Log mounted routes
+    mounted_count = 0
+    for route in fastapi_app.routes:
+        if hasattr(route, "__class__") and "Mount" in route.__class__.__name__:
+            mounted_count += 1
+    logger.info(f"📊 Mounted routes: {mounted_count}")
+
+    yield
+
+    logger.info("🚀 FastAPI lifespan ending")
+
+
+# Create API app with lifespan
 app = FastAPI(
-    title="42-Bank Mobile API",
+    title="42-Bank API",
     description=(
-        "REST API for the 42-Bank mobile app. Provides authentication, "
-        "key management, and push notifications for the quantum-safe "
-        "multi-agent banking platform.\n\n"
+        "Consolidated API for 42-Bank. Provides authentication, "
+        "key management, notifications, and A2A agent communication.\n\n"
         "## Authentication\n"
-        "Most endpoints require a Bearer JWT in the `Authorization` header:\n"
-        "```\nAuthorization: Bearer <access_token>\n```\n\n"
-        "## Rate Limits\n"
-        "- `/api/auth/register`: 5 requests/minute\n"
-        "- `/api/auth/login`: 10 requests/minute\n"
-        "- `/api/auth/refresh`: 20 requests/minute\n"
+        "Hackathon mode: Use `x-api-key: hackathon-demo-key-2024` header\n"
+        "Production mode: Bearer JWT token in `Authorization` header\n\n"
+        "## Endpoints\n"
+        "- `/api/*` - Mobile API endpoints\n"
+        "- `/a2a/*` - A2A agent endpoints\n"
+        "- `/api/health` - Health check\n"
     ),
     version="1.0.0",
     openapi_tags=[
@@ -67,9 +82,14 @@ app = FastAPI(
             "name": "notifications",
             "description": "Push notification registration, history, and preferences.",
         },
+        {
+            "name": "accounts",
+            "description": "Account management and balance queries.",
+        },
     ],
     contact={"name": "42-Bank Team"},
     license_info={"name": "MIT"},
+    lifespan=lifespan,
 )
 
 # Rate limiting
@@ -122,3 +142,104 @@ validate_env()
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "service": "42-bank-api"}
+
+
+# A2A Integration - Initialize lazily on first request
+# This avoids blocking app startup and allows the app to function even if A2A fails
+_a2a_initialized = False
+_a2a_error = None
+
+
+async def initialize_a2a():
+    """Initialize A2A integration lazily."""
+    global _a2a_initialized, _a2a_error
+
+    logger.info(f"🔄 initialize_a2a called, _a2a_initialized={_a2a_initialized}")
+
+    if _a2a_initialized:
+        logger.info(f"✅ A2A already initialized, returning: {_a2a_error is None}")
+        return _a2a_error is None
+
+    try:
+        logger.info("🔄 Initializing A2A integration...")
+
+        # Import A2A server creation
+        from a2a_server import create_a2a_app as create_a2a_starlette_app
+        from identity import IdentityManager
+        from ledger import LedgerEngine
+
+        # Initialize dependencies
+        identity = IdentityManager()
+        ledger = LedgerEngine()
+
+        # Get session token for default user
+        username = "alice"
+        try:
+            session_token = identity.get_token(username)
+            if not session_token:
+                import hashlib
+
+                session_token = hashlib.sha256(username.encode()).hexdigest()
+                logger.info(f"⚠️ Using placeholder token for user '{username}'")
+        except Exception as e:
+            logger.warning(f"Could not get token for {username}: {e}")
+            import hashlib
+
+            session_token = hashlib.sha256(username.encode()).hexdigest()
+
+        # Get configuration
+        api_key = os.getenv("AZURE_API_KEY", "hackathon-demo-key-2024")
+        mcp_server_url = os.getenv("MCP_SERVER_URL", "http://localhost:8001/mcp")
+        model_name = os.getenv("MODEL_NAME")
+
+        # Create A2A app
+        logger.info("🔄 Creating A2A application...")
+        a2a_app = await create_a2a_starlette_app(
+            ledger=ledger,
+            identity=identity,
+            username=username,
+            session_token=session_token,
+            mode="hosted",
+            model_name=model_name,
+            api_key=api_key,
+            require_auth=False,
+            mcp_server_url=mcp_server_url,
+            host="0.0.0.0",
+            port=8000,
+        )
+
+        # Mount A2A app at /a2a
+        logger.info(f"🔄 Mounting A2A app at /a2a, routes count: {len(a2a_app.routes)}")
+        app.mount("/a2a", a2a_app)
+        logger.info("✅ A2A server mounted at /a2a")
+
+        # Debug: List all routes after mounting
+        logger.info(f"📊 Total app routes after mount: {len(app.routes)}")
+        for route in app.routes:
+            if hasattr(route, "path"):
+                path = getattr(route, "path", "")
+                if "/a2a" in path:
+                    logger.info(f"  Found A2A route: {path}")
+
+        _a2a_initialized = True
+        return True
+
+    except Exception as e:
+        import traceback
+
+        _a2a_error = str(e)
+        logger.error(f"❌ A2A initialization failed: {e}")
+        logger.error(traceback.format_exc())
+        _a2a_initialized = True
+        return False
+
+
+# Add lazy initialization endpoint
+@app.get("/a2a/initialize")
+async def trigger_a2a_init():
+    """Trigger A2A initialization."""
+    success = await initialize_a2a()
+    if success:
+        return {"status": "initialized"}
+    else:
+        return {"status": "failed", "error": _a2a_error}

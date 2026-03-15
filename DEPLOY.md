@@ -1,48 +1,81 @@
-# 42-Bank Hackathon Quick Start
+# 42-Bank Deployment Guide
 
-## 🚀 Deploy in 5 Minutes
+## Prerequisites
+
+- Azure CLI installed
+- Docker installed
+- Python 3.10+ with uv
+- Node.js for mobile app
+
+## Step 1: Build Container
 
 ```bash
-# 1. Build and deploy container
 docker buildx build --platform linux/amd64 -t 42bank:latest .
-az acr create --resource-group 42-bank --name 42bankacr --sku Basic
+```
+
+## Step 2: Create ACR and Push
+
+```bash
+# Create ACR
+az acr create --resource-group 42-bank --name 42bankacr --sku Basic --admin-enabled true
+
+# Login and push
 az acr login --name 42bankacr
 docker tag 42bank:latest 42bankacr.azurecr.io/42bank:latest
 docker push 42bankacr.azurecr.io/42bank:latest
+```
 
-# 2. Update Container App
+## Step 3: Update Container App
+
+```bash
+# Update image
 az containerapp update \
   --name bank42api \
   --resource-group 42-bank \
-  --image 42bankacr.azurecr.io/42bank:latest \
+  --image 42bankacr.azurecr.io/42bank:latest
+
+# Set environment variables
+az containerapp update \
+  --name bank42api \
+  --resource-group 42-bank \
   --set-env-vars \
     COSMOS_ENDPOINT="https://42bank-cosmos-usk6nbovln4w6.documents.azure.com:443/" \
     COSMOS_DATABASE="banking" \
     APP_ENV="production" \
     AZURE_AI_PROJECT_ENDPOINT="https://42-bank-us-east-2-resource.cognitiveservices.azure.com/" \
     AZURE_AI_MODEL_DEPLOYMENT_NAME="model-router"
-
-# 3. Bootstrap database
-COSMOS_KEY=$(az cosmosdb keys list --name 42bank-cosmos-usk6nbovln4w6 --resource-group 42-bank --query "primaryMasterKey" -o tsv)
-export AZURE_COSMOS_CONNECTION_STRING="AccountEndpoint=https://42bank-cosmos-usk6nbovln4w6.documents.azure.com:443/;AccountKey=$COSMOS_KEY"
-export COSMOS_DATABASE="banking"
-uv run python bootstrap_hackathon.py
-
-# 4. Test
-APP_URL=$(az containerapp show --name bank42api --resource-group 42-bank --query "properties.configuration.ingress.fqdn" -o tsv)
-curl -H "x-api-key: hackathon-demo-key-2024" https://$APP_URL/api/health
 ```
 
-## 📱 Mobile App Setup
+## Step 4: Bootstrap Database
 
 ```bash
-cd mobile
-npm install
-npx expo start
-# Scan QR code with Expo Go app
+# Get Cosmos DB key
+COSMOS_KEY=$(az cosmosdb keys list --name 42bank-cosmos-usk6nbovln4w6 --resource-group 42-bank --query "primaryMasterKey" -o tsv)
+
+# Set environment
+export AZURE_COSMOS_CONNECTION_STRING="AccountEndpoint=https://42bank-cosmos-usk6nbovln4w6.documents.azure.com:443/;AccountKey=$COSMOS_KEY"
+export COSMOS_DATABASE="banking"
+
+# Bootstrap
+uv run python bootstrap_hackathon.py
 ```
 
-**Production URLs** (update `mobile/app.json`):
+## Step 5: Test Deployment
+
+```bash
+# Get app URL
+APP_URL=$(az containerapp show --name bank42api --resource-group 42-bank --query "properties.configuration.ingress.fqdn" -o tsv)
+
+# Test health
+curl -H "x-api-key: hackathon-demo-key-2024" https://$APP_URL/api/health
+
+# Expected: {"status": "healthy", "service": "42-bank-api"}
+```
+
+## Step 6: Configure Mobile App
+
+Update `mobile/app.json`:
+
 ```json
 {
   "extra": {
@@ -52,27 +85,33 @@ npx expo start
 }
 ```
 
-## 🎯 Demo Flow (5 minutes)
+Then run:
+```bash
+cd mobile
+npm install
+npx expo start
+```
 
-1. **Show Backend** (30s): Open `https://<app-url>/api/health`
-2. **Login** (1 min): Login as "alice" (balance: $2,500)
-3. **Send Money** (1 min): Send $50 to Bob
-4. **AI Query** (1 min): Ask "What is my balance?"
-5. **Tech Stack** (30s): Explain Azure + Cosmos DB + A2A
+## Troubleshooting
 
-## 💰 Cost
+**Container not starting:**
+```bash
+az containerapp logs show --name bank42api --resource-group 42-bank
+```
 
-**Total: ~$0** (within Azure free tier)
-- Container Apps: FREE (99,999 vCPU-sec/month)
-- Cosmos DB: FREE (first 30 days)
+**Database connection failed:**
+- Verify Cosmos DB endpoint is correct
+- Check firewall settings
+- Ensure connection string is valid
 
-## 🧹 Cleanup
+**Mobile app won't connect:**
+- Use same network for phone and computer
+- Check URLs in app.json
+- Try Expo Go app QR code scan
 
+## Cleanup
+
+After hackathon:
 ```bash
 az group delete --name 42-bank --yes --no-wait
 ```
-
-## 📚 Full Documentation
-
-- **DEMO.md** - Complete demo script
-- **DEPLOY.md** - Detailed deployment guide

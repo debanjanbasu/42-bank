@@ -3,17 +3,17 @@
 from agent_framework import MCPStreamableHTTPTool
 
 
-def get_banking_mcp_tools(mcp_server_url: str = "http://localhost:8001"):
+def get_banking_mcp_tools(mcp_server_url: str = "http://localhost:8001/mcp"):
     """
     Get banking tools from MCP server as agent_framework MCPTools.
 
     Args:
-        mcp_server_url: Base URL of the MCP HTTP server (e.g., http://localhost:8001)
+        mcp_server_url: URL of the MCP HTTP server (should end with /mcp)
 
     Returns:
         Single MCPStreamableHTTPTool that auto-discovers all tools from the server
     """
-    # FastMCP streamable HTTP endpoint is at /mcp
+    # Ensure URL ends with /mcp
     if not mcp_server_url.endswith("/mcp"):
         mcp_server_url = f"{mcp_server_url}/mcp"
 

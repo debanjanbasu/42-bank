@@ -1,46 +1,31 @@
-# 42 Bank Hosted Agent - Dockerfile for Azure AI Foundry
-# 
-# IMPORTANT: Azure AI Foundry Hosted Agents ONLY support linux/amd64
-# On Apple Silicon (ARM64) Macs, use buildx for cross-platform builds:
-#   docker buildx build --platform linux/amd64 -t 42-bank-agent .
+# 42-Bank Single-Container Deployment
+# AMD64 only for Azure deployment
 
-FROM --platform=linux/amd64 python:3.12-slim
-
-# Install uv from the official image
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends gcc curl && rm -rf /var/lib/apt/lists/*
 
-# Copy dependency files for caching
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
 COPY pyproject.toml uv.lock ./
 
-# Install dependencies directly to the system (optimal for containers)
-# Using --system to avoid the overhead of a virtualenv inside the container
-RUN uv pip install --system --no-cache -r pyproject.toml
+RUN uv venv /app/venv && \
+    . /app/venv/bin/activate && \
+    uv pip install --no-cache -r pyproject.toml
 
-# Copy application code
 COPY . .
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh && mkdir -p /app/data/keys
 
-# Create data directory
-RUN mkdir -p /app/data/keys
-
-# Expose port (A2A server uses 8000 by default)
-EXPOSE 8000
-
-# Environment variables
+ENV PATH="/app/venv/bin:$PATH"
 ENV APP_ENV="production"
-ENV BANK_USER="alice"
 ENV PYTHONUNBUFFERED=1
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+EXPOSE 8000
 
-# Run the A2A server
-CMD ["python", "a2a_server.py", "--port", "8000"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:8000/api/health || exit 1
+
+CMD ["/app/start.sh"]

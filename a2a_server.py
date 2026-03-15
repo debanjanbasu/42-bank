@@ -17,10 +17,13 @@ import json
 import sys
 import uuid
 import httpx
+import logging
 from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any, List, Callable
 
 from starlette.applications import Starlette
+
+logger = logging.getLogger("42bank.a2a")
 from starlette.routing import Route
 from starlette.responses import JSONResponse, StreamingResponse
 from starlette.requests import Request
@@ -226,11 +229,12 @@ class A2AAgentHandler:
 
     def get_agent_card(self, base_url: str) -> Dict[str, Any]:
         """Return A2A Agent Card for discovery."""
+        # base_url already includes /a2a prefix since app is mounted there
         return {
             "name": f"42-Bank-{self.agent_key.title()}Agent",
             "description": AGENT_DESCRIPTIONS[self.agent_key],
             "version": "1.0.0",
-            "url": f"{base_url}/a2a/{self.agent_key}",
+            "url": f"{base_url}/{self.agent_key}",
             "capabilities": {"streaming": True, "pushNotifications": False},
             "skills": AGENT_SKILLS.get(self.agent_key, []),
             "defaultInputModes": ["text"],
@@ -432,7 +436,6 @@ class A2AAgentHandler:
                 response = await self.agent.run(user_text)
                 response_text = response.text.strip()
 
-
                 if not response_text or response_text == "None":
                     response_text = "I've processed your request."
 
@@ -470,25 +473,32 @@ async def create_a2a_app(
     model_name: Optional[str] = None,
     api_key: Optional[str] = None,
     require_auth: bool = False,
-    mcp_server_url: str = "http://localhost:8001",
+    mcp_server_url: Optional[str] = None,
     host: str = "0.0.0.0",
     port: int = 8000,
 ) -> Starlette:
-    """Create A2A server application with MCP tool integration."""
+    """Create A2A server application with MCP tool integration.
+
+    Args:
+        mcp_server_url: URL of MCP server. If None, uses environment variable or default.
+    """
+    # Use provided URL, or get from environment, or use default
+    if mcp_server_url is None:
+        mcp_server_url = os.getenv("MCP_SERVER_URL", "http://localhost:8001/mcp")
     client = await create_chat_client_async(mode, model_name)
 
     # Get MCP tools from the MCP server
     # MCPStreamableHTTPTool auto-discovers all tools from the server
+    # Don't connect during startup - connection is lazy on first tool use
     mcp_tools = get_banking_mcp_tools(mcp_server_url)
+    logger.info(f"📦 MCP tools configured (connection on first use): {mcp_server_url}")
 
-    # Connect to MCP server to load available tools
-    await mcp_tools.connect()
-
-    # Create specialist agents with MCP tools - pass the functions list
-    inquiry_agent = inquiry.get_agent(client, mcp_tools.functions)
-    transaction_agent = transaction.get_agent(client, mcp_tools.functions)
-    advisor_agent = advisor.get_agent(client, mcp_tools.functions)
-    manager_agent = manager.get_agent(client, mcp_tools.functions)
+    # Create specialist agents with MCP tools
+    # The tools will connect on first use
+    inquiry_agent = inquiry.get_agent(client, mcp_tools)
+    transaction_agent = transaction.get_agent(client, mcp_tools)
+    advisor_agent = advisor.get_agent(client, mcp_tools)
+    manager_agent = manager.get_agent(client, mcp_tools)
 
     # Create triage agent WITHOUT tools - it only routes
     triage_agent = triage.get_agent(client, tools=None)
@@ -518,24 +528,32 @@ async def create_a2a_app(
     routes = []
 
     for agent_key, handler in handlers.items():
+        # Capture agent_key in closure to avoid Python closure issues
+        current_agent_key = agent_key
+        current_handler = handler
 
-        async def get_card(request: Request, h=handler):
+        async def get_card(request: Request, h=current_handler, key=current_agent_key):
             base_url = str(request.base_url).rstrip("/")
             return JSONResponse(h.get_agent_card(base_url))
 
-        async def post_message(request: Request, h=handler):
+        async def post_message(
+            request: Request, h=current_handler, key=current_agent_key
+        ):
             """Non-streaming message endpoint."""
             result = await h.handle_message(request, use_streaming=False)
             if isinstance(result, StreamingResponse):
                 return result  # Already a response
             return JSONResponse(result)
 
-        async def post_message_stream(request: Request, h=handler):
+        async def post_message_stream(
+            request: Request, h=current_handler, key=current_agent_key
+        ):
             """Streaming message endpoint using Server-Sent Events."""
             result = await h.handle_message(request, use_streaming=True)
             return result  # Already a StreamingResponse
 
-        path = f"/a2a/{agent_key}"
+        # Remove leading /a2a/ since app will be mounted at /a2a
+        path = f"/{current_agent_key}"
         routes.append(Route(path, endpoint=get_card, methods=["GET"]))
         routes.append(
             Route(f"{path}/v1/message", endpoint=post_message, methods=["POST"])
@@ -551,13 +569,14 @@ async def create_a2a_app(
 
     async def list_agents(request: Request) -> JSONResponse:
         base_url = str(request.base_url).rstrip("/")
+        # Remove /a2a prefix since app is mounted at /a2a
         return JSONResponse(
             {
                 "agents": [
                     {
                         "name": f"42-Bank-{k.title()}Agent",
-                        "path": f"/a2a/{k}",
-                        "url": f"{base_url}/a2a/{k}",
+                        "path": f"/{k}",
+                        "url": f"{base_url}/{k}",
                         "description": AGENT_DESCRIPTIONS[k],
                     }
                     for k in agents
@@ -581,7 +600,8 @@ async def create_a2a_app(
 
     routes.extend(
         [
-            Route("/a2a", endpoint=list_agents, methods=["GET"]),
+            # Remove /a2a prefix since app is mounted at /a2a
+            Route("/", endpoint=list_agents, methods=["GET"]),
             Route("/health", endpoint=health, methods=["GET"]),
             Route("/v1/models", endpoint=models_endpoint, methods=["GET"]),
         ]
@@ -696,7 +716,7 @@ if __name__ == "__main__":
         p.add_argument("--host", default="0.0.0.0")
         p.add_argument("--port", type=int, default=8000)
         p.add_argument("--user", choices=["alice", "bob"], default="alice")
-        p.add_argument("--mode", choices=["local", "hosted"], default="local")
+        p.add_argument("--mode", choices=["local", "hosted"], default="hosted")
         p.add_argument("--model", default=None)
         p.add_argument("--api-key", default=None, help="API key for authentication")
         p.add_argument(

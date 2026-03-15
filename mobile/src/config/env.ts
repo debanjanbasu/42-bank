@@ -9,21 +9,24 @@ interface EnvironmentConfig {
 }
 
 const ENVIRONMENTS: Record<Environment, EnvironmentConfig> = {
-	development: {
-		API_URL: 'http://localhost:8000',
-		A2A_URL: 'http://localhost:8002',
-		ENABLE_DEBUGGING: true,
-	},
-	staging: {
-		API_URL: 'https://42bank-staging.azurewebsites.net',
-		A2A_URL: 'https://42bank-staging.azurewebsites.net',
-		ENABLE_DEBUGGING: true,
-	},
-	production: {
-		API_URL: 'https://42bank.azurewebsites.net',
-		A2A_URL: 'https://42bank.azurewebsites.net',
-		ENABLE_DEBUGGING: false,
-	},
+  development: {
+    // Local development - both API and A2A on same port
+    API_URL: 'http://localhost:8000',
+    A2A_URL: 'http://localhost:8000',
+    ENABLE_DEBUGGING: true,
+  },
+  staging: {
+    // Staging - unified endpoint
+    API_URL: 'https://42bank-staging.azurecontainerapps.io',
+    A2A_URL: 'https://42bank-staging.azurecontainerapps.io',
+    ENABLE_DEBUGGING: true,
+  },
+  production: {
+    // Production - unified endpoint
+    API_URL: 'https://42bank.azurecontainerapps.io',
+    A2A_URL: 'https://42bank.azurecontainerapps.io',
+    ENABLE_DEBUGGING: false,
+  },
 };
 
 const ENV: Environment = __DEV__ ? 'development' : 'production';

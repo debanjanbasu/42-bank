@@ -54,16 +54,17 @@
     "experiments": {
       "typedRoutes": true
     },
-	"extra": {
-		"router": {
-			"origin": false
-		},
-		"eas": {
-			"projectId": ""
-		},
-		"apiUrl": "http://localhost:8000",
-		"a2aUrl": "http://localhost:8002"
-	},
+  "extra": {
+    "router": {
+      "origin": false
+    },
+    "eas": {
+      "projectId": ""
+    },
+    "apiUrl": "https://bank42api.victoriousbush-d930b25a.eastus.azurecontainerapps.io",
+    "a2aUrl": "https://bank42api.victoriousbush-d930b25a.eastus.azurecontainerapps.io",
+    "enableDebugging": false
+  },
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",

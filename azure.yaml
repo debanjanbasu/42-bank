@@ -1,0 +1,46 @@
+# azure.yaml - Azure Developer CLI Configuration
+# Deploy 42-Bank to Azure Container Apps (Hackathon Edition)
+#
+# Usage:
+# azd init
+# azd env new hackathon
+#   azd env set AZURE_API_KEY="hackathon-demo-key-2024"
+#   azd up
+#
+# Cost: ~$0 (within Azure free tier limits)
+# - Container Apps: 99,999 vCPU-seconds/month FREE
+# - Cosmos DB: First 30 days FREE (1000 RU/s, 25GB)
+# - Total: $0 for hackathon demo!
+
+name: 42-bank-hackathon
+
+services:
+  api:
+    project: .
+    language: python
+    host: containerapp
+    docker:
+      remoteBuild: false
+    image: 42bank:latest
+    resourceGroup: 42-bank
+    ports:
+    - 8000
+
+infra:
+  bicep:
+    path: infra
+  state:
+    path: ./azure.yaml
+
+hooks:
+  postprovision:
+    - shell: sh
+      run: |
+        echo "✅ Deployment complete!"
+        echo ""
+        echo "Next steps:"
+        echo "1. Bootstrap database: uv run python bootstrap_hackathon.py"
+        echo "2. Get app URL: az containerapp show --name 42bank-api --resource-group 42-bank --query 'properties.configuration.ingress.fqdn' -o tsv"
+        echo "3. Test: curl https://<app-url>/api/health"
+        echo ""
+        echo "See DEMO.md for full demo instructions"

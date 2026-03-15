@@ -159,17 +159,26 @@ def create_chat_client(mode: str = "local", model_name: Optional[str] = None):
         )
         return client
     else:
+        # Hosted mode - use Azure OpenAI with model router via standard OpenAI client
         project_endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT")
-        if not project_endpoint:
-            raise ValueError("AZURE_AI_PROJECT_ENDPOINT required for hosted mode")
+        api_key = os.getenv("AZURE_OPENAI_API_KEY")
         model_deployment_name = model_name or os.getenv(
-            "AZURE_AI_MODEL_DEPLOYMENT_NAME", "qwen2.5-1.5b-instruct-generic-gpu:4"
+            "AZURE_AI_MODEL_DEPLOYMENT_NAME", "model-router"
         )
-        return AzureAIClient(
-            project_endpoint=project_endpoint,
-            model_deployment_name=model_deployment_name,
-            credential=DefaultAzureCredential(),
+        
+        if not project_endpoint or not api_key:
+            raise ValueError("AZURE_AI_PROJECT_ENDPOINT and AZURE_OPENAI_API_KEY required for hosted mode")
+        
+        # Use standard AsyncOpenAI client with Azure OpenAI endpoint
+        async_client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=f"{project_endpoint}openai/v1/",
         )
+        client = OpenAIChatClient(model_id=model_deployment_name, async_client=async_client)
+        # Enable function invocation
+        client.function_invocation_configuration["include_detailed_errors"] = True
+        client.function_invocation_configuration["max_iterations"] = 40
+        return client
 
 
 async def create_chat_client_async(mode: str = "local", model_name: Optional[str] = None):
@@ -185,17 +194,26 @@ async def create_chat_client_async(mode: str = "local", model_name: Optional[str
         async_client._client.request = _patched_request.__get__(async_client._client, type(async_client._client))
         return OpenAIChatClient(model_id=model_id, async_client=async_client)
     else:
+        # Hosted mode - use Azure OpenAI with model router via standard OpenAI client
         project_endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT")
-        if not project_endpoint:
-            raise ValueError("AZURE_AI_PROJECT_ENDPOINT required for hosted mode")
+        api_key = os.getenv("AZURE_OPENAI_API_KEY")
         model_deployment_name = model_name or os.getenv(
-            "AZURE_AI_MODEL_DEPLOYMENT_NAME", "qwen2.5-1.5b-instruct-generic-gpu:4"
+            "AZURE_AI_MODEL_DEPLOYMENT_NAME", "model-router"
         )
-        return AzureAIClient(
-            project_endpoint=project_endpoint,
-            model_deployment_name=model_deployment_name,
-            credential=DefaultAzureCredential(),
+        
+        if not project_endpoint or not api_key:
+            raise ValueError("AZURE_AI_PROJECT_ENDPOINT and AZURE_OPENAI_API_KEY required for hosted mode")
+        
+        # Use standard AsyncOpenAI client with Azure OpenAI endpoint
+        async_client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=f"{project_endpoint}openai/v1/",
         )
+        client = OpenAIChatClient(model_id=model_deployment_name, async_client=async_client)
+        # Enable function invocation
+        client.function_invocation_configuration["include_detailed_errors"] = True
+        client.function_invocation_configuration["max_iterations"] = 40
+        return client
 
 
 def get_foundry_local_endpoint() -> str:
