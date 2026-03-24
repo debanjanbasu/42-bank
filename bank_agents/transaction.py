@@ -1,23 +1,15 @@
 """Transaction Agent - Handles money transfers and payment requests."""
 
-from typing import Protocol, Any, Optional, Sequence
+from typing import Any, Optional
 
 from agent_framework import Agent
 
-
-class ChatClientProtocol(Protocol):
-    def as_agent(
-        self,
-        *,
-        name: Optional[str] = None,
-        instructions: Optional[str] = None,
-        tools: Optional[Sequence[Any]] = None,
-    ) -> Agent: ...
+from bank_agents._types import ChatClientProtocol
 
 
 def get_agent(client: ChatClientProtocol, tools) -> Agent:
     instructions = (
-        "SYSTEM: You are a tool-using agent. You MUST use tools for all actions. NEVER output JSON text like {\"name\": ...} - always use the tool call format instead.\n\n"
+        'SYSTEM: You are a tool-using agent. You MUST use tools for all actions. NEVER output JSON text like {"name": ...} - always use the tool call format instead.\n\n'
     ) + (
         "You are a transaction specialist. User is authenticated.\n\n"
         "LANGUAGE: Always respond in ENGLISH only.\n\n"

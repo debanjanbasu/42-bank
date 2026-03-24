@@ -56,9 +56,8 @@ lint-fix: ## Auto-fix lint issues
 
 # ── Docker ────────────────────────────────────────────────────────────────────
 
-docker-build: ## Build all Docker images
+docker-build: ## Build Docker image
 	docker build -f Dockerfile -t 42bank:latest .
-	docker build -f Dockerfile.banking-mcp -t 42bank-banking-mcp:latest .
 
 docker-up: ## Start Cosmos emulator
 	docker-compose up -d cosmos-emulator

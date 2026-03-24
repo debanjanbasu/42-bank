@@ -1,78 +1,56 @@
-# 42-Bank Hackathon Quick Start
+# 42-Bank
 
-## 🚀 Deploy in 5 Minutes
+A quantum-safe multi-agent banking platform using the Microsoft Agent Framework (A2A + MCP protocols), Azure Cosmos DB, and ML-DSA-44 post-quantum cryptography.
 
-```bash
-# 1. Build and deploy container
-docker buildx build --platform linux/amd64 -t 42bank:latest .
-az acr create --resource-group 42-bank --name 42bankacr --sku Basic
-az acr login --name 42bankacr
-docker tag 42bank:latest 42bankacr.azurecr.io/42bank:latest
-docker push 42bankacr.azurecr.io/42bank:latest
+## Architecture
 
-# 2. Update Container App
-az containerapp update \
-  --name bank42api \
-  --resource-group 42-bank \
-  --image 42bankacr.azurecr.io/42bank:latest \
-  --set-env-vars \
-    COSMOS_ENDPOINT="https://42bank-cosmos-usk6nbovln4w6.documents.azure.com:443/" \
-    COSMOS_DATABASE="banking" \
-    APP_ENV="production" \
-    AZURE_AI_PROJECT_ENDPOINT="https://42-bank-us-east-2-resource.cognitiveservices.azure.com/" \
-    AZURE_AI_MODEL_DEPLOYMENT_NAME="model-router"
+- **5 specialized agents** (Triage, Inquiry, Transaction, Advisor, Manager) communicating via A2A protocol with SSE streaming
+- **9 MCP banking tools** exposed via Model Context Protocol
+- **React Native / Expo 55** mobile app with biometric auth and offline caching
+- **Azure Cosmos DB** for all environments (serverless, async SDK)
+- **ML-DSA-44** post-quantum cryptography for transaction signing
 
-# 3. Bootstrap database
-COSMOS_KEY=$(az cosmosdb keys list --name 42bank-cosmos-usk6nbovln4w6 --resource-group 42-bank --query "primaryMasterKey" -o tsv)
-export AZURE_COSMOS_CONNECTION_STRING="AccountEndpoint=https://42bank-cosmos-usk6nbovln4w6.documents.azure.com:443/;AccountKey=$COSMOS_KEY"
-export COSMOS_DATABASE="banking"
-uv run python bootstrap_hackathon.py
-
-# 4. Test
-APP_URL=$(az containerapp show --name bank42api --resource-group 42-bank --query "properties.configuration.ingress.fqdn" -o tsv)
-curl -H "x-api-key: hackathon-demo-key-2024" https://$APP_URL/api/health
-```
-
-## 📱 Mobile App Setup
+## Quick Start
 
 ```bash
-cd mobile
-npm install
-npx expo start
-# Scan QR code with Expo Go app
+# Prerequisites: Docker Desktop, uv, Foundry Local, Node.js 18+
+
+# Start local Cosmos emulator
+docker-compose up -d
+
+# Start backend servers
+./dev.sh alice
+
+# Start mobile app
+cd mobile && npm install && npx expo start --dev-client
 ```
 
-**Production URLs** (update `mobile/app.json`):
-```json
-{
-  "extra": {
-    "apiUrl": "https://bank42api.calmdesert-cd3f3a1f.eastus.azurecontainerapps.io",
-    "a2aUrl": "https://bank42api.calmdesert-cd3f3a1f.eastus.azurecontainerapps.io"
-  }
-}
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [AGENTS.md](AGENTS.md) | Architecture, project structure, code conventions, agent definitions |
+| [SETUP.md](SETUP.md) | Local development setup guide |
+| [TESTING.md](TESTING.md) | Testing philosophy, test suite, running tests |
+| [PRODUCTION_RELEASE.md](PRODUCTION_RELEASE.md) | Azure deployment and operations |
+| [docs/adr/](docs/adr/) | Architecture Decision Records (5 ADRs) |
+
+## Project Structure
+
+```
+42-bank/
+├── a2a_server.py           # A2A protocol server (5 agents, SSE streaming)
+├── mcp_server.py            # MCP server (9 banking tools)
+├── ledger.py                # Transaction ledger (Cosmos DB, Pydantic)
+├── identity.py              # ML-DSA-44 cryptography
+├── api/                     # Mobile backend API (FastAPI)
+├── bank_agents/             # Agent definitions
+├── mobile/                  # React Native / Expo app
+├── tests/                   # Test suite (43 tests)
+├── infra/                   # Azure Bicep IaC
+└── docs/adr/                # Architecture Decision Records
 ```
 
-## 🎯 Demo Flow (5 minutes)
+## License
 
-1. **Show Backend** (30s): Open `https://<app-url>/api/health`
-2. **Login** (1 min): Login as "alice" (balance: $2,500)
-3. **Send Money** (1 min): Send $50 to Bob
-4. **AI Query** (1 min): Ask "What is my balance?"
-5. **Tech Stack** (30s): Explain Azure + Cosmos DB + A2A
-
-## 💰 Cost
-
-**Total: ~$0** (within Azure free tier)
-- Container Apps: FREE (99,999 vCPU-sec/month)
-- Cosmos DB: FREE (first 30 days)
-
-## 🧹 Cleanup
-
-```bash
-az group delete --name 42-bank --yes --no-wait
-```
-
-## 📚 Full Documentation
-
-- **DEMO.md** - Complete demo script
-- **DEPLOY.md** - Detailed deployment guide
+MIT

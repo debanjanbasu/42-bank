@@ -1,18 +1,10 @@
 """Advisor Agent - Assists with bank products and account opening."""
 
-from typing import Protocol, Any, Optional, Sequence
+from typing import Any, Optional
 
 from agent_framework import Agent
 
-
-class ChatClientProtocol(Protocol):
-    def as_agent(
-        self,
-        *,
-        name: Optional[str] = None,
-        instructions: Optional[str] = None,
-        tools: Optional[Sequence[Any]] = None,
-    ) -> Agent: ...
+from bank_agents._types import ChatClientProtocol
 
 
 def get_agent(client: ChatClientProtocol, tools) -> Agent:

@@ -41,7 +41,7 @@ from azure.identity.aio import DefaultAzureCredential
 from azure.core.credentials import AccessToken
 
 from dotenv import load_dotenv
-from utils import create_chat_client, create_chat_client_async
+from utils import create_chat_client
 from mcp_client import get_banking_mcp_tools
 from bank_agents import triage, transaction, inquiry, advisor, manager
 from identity import IdentityManager
@@ -297,7 +297,6 @@ class A2AAgentHandler:
                     target_url += ":stream"
 
                 if use_streaming:
-
                     # Build headers with auth forwarding
                     forward_headers = {"Content-Type": "application/json"}
                     if self.api_key:
@@ -348,7 +347,7 @@ class A2AAgentHandler:
                 target_response = await self.http_client.post(  # type: ignore[union-attr]
                     target_url,
                     json=original_body,
-                    headers={"Content-Type": "application/json"},
+                    headers=forward_headers,
                 )
 
                 # Forward JSON response, with error handling for non-200
@@ -495,7 +494,7 @@ async def create_a2a_app(
     # Use provided URL, or get from environment, or use default
     if mcp_server_url is None:
         mcp_server_url = os.getenv("MCP_SERVER_URL", "http://localhost:8001/mcp")
-    client = await create_chat_client_async(mode, model_name)
+    client = await create_chat_client(mode, model_name)
 
     # Get MCP tools from the MCP server
     # MCPStreamableHTTPTool auto-discovers all tools from the server
@@ -533,7 +532,9 @@ async def create_a2a_app(
                 agent, key, all_agents=agents, base_url=base_url, api_key=api_key
             )
         else:
-            handlers[key] = A2AAgentHandler(agent, key, base_url=base_url)
+            handlers[key] = A2AAgentHandler(
+                agent, key, base_url=base_url, api_key=api_key
+            )
 
     routes = []
 

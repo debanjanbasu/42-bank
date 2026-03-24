@@ -38,7 +38,10 @@ def cosmos_db():
     cosmos_mod._cosmos_client = None
     try:
         from azure.cosmos import CosmosClient
-        cosmos = CosmosClient.from_connection_string(EMULATOR_CONN_STR, connection_verify=False)
+
+        cosmos = CosmosClient.from_connection_string(
+            EMULATOR_CONN_STR, connection_verify=False
+        )
         cosmos.delete_database(db_name)
     except Exception:
         pass
@@ -57,7 +60,11 @@ class TestJWTSecurity:
         from fastapi import HTTPException
 
         bad_token = pyjwt.encode(
-            {"sub": "alice_tok", "type": "access", "exp": datetime.utcnow() + timedelta(hours=1)},
+            {
+                "sub": "alice_tok",
+                "type": "access",
+                "exp": datetime.now(datetime.UTC) + timedelta(hours=1),
+            },
             JWT_SECRET,
             algorithm="HS512",
         )
@@ -74,7 +81,7 @@ class TestJWTSecurity:
             {
                 "sub": "alice_tok",
                 "type": "access",
-                "exp": datetime.utcnow() - timedelta(seconds=1),
+                "exp": datetime.now(datetime.UTC) - timedelta(seconds=1),
             },
             JWT_SECRET,
             algorithm=JWT_ALGORITHM,
@@ -89,7 +96,11 @@ class TestJWTSecurity:
         from fastapi import HTTPException
 
         bad_token = pyjwt.encode(
-            {"sub": "alice_tok", "type": "access", "exp": datetime.utcnow() + timedelta(hours=1)},
+            {
+                "sub": "alice_tok",
+                "type": "access",
+                "exp": datetime.now(datetime.UTC) + timedelta(hours=1),
+            },
             "completely-wrong-secret",
             algorithm=JWT_ALGORITHM,
         )
@@ -106,7 +117,7 @@ class TestJWTSecurity:
             {
                 "sub": "alice_tok",
                 "type": "refresh",
-                "exp": datetime.utcnow() + timedelta(days=30),
+                "exp": datetime.now(datetime.UTC) + timedelta(days=30),
             },
             JWT_SECRET,
             algorithm=JWT_ALGORITHM,
@@ -125,7 +136,7 @@ class TestJWTSecurity:
                 "username": "alice",
                 "type": "access",
                 "jti": str(uuid.uuid4()),
-                "exp": datetime.utcnow() + timedelta(hours=1),
+                "exp": datetime.now(datetime.UTC) + timedelta(hours=1),
             },
             JWT_SECRET,
             algorithm=JWT_ALGORITHM,
@@ -152,7 +163,7 @@ class TestTokenRevocation:
                 "username": "alice",
                 "type": "access",
                 "jti": jti,
-                "exp": datetime.utcnow() + timedelta(hours=1),
+                "exp": datetime.now(datetime.UTC) + timedelta(hours=1),
             },
             JWT_SECRET,
             algorithm=JWT_ALGORITHM,
@@ -192,7 +203,9 @@ class TestInputSanitization:
         await engine.create_user("alice_tok", "alice", initial_balance=100.0)
         await engine.create_user("bob_tok", "bob", initial_balance=0.0)
         # Ledger should reject based on insufficient funds anyway
-        assert await engine.transfer("alice_tok", "bob", 1_000_001.0, "too big") is False
+        assert (
+            await engine.transfer("alice_tok", "bob", 1_000_001.0, "too big") is False
+        )
 
 
 # ── Ledger integrity tests ────────────────────────────────────────────────────

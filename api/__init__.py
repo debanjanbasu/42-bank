@@ -19,7 +19,7 @@ from slowapi.errors import RateLimitExceeded
 from starlette.requests import Request
 
 from api.auth import router as auth_router
-from api.deps import limiter, validate_env, validate_jwt_configuration
+from api.deps import limiter, validate_env
 from api.keys import router as keys_router
 from api.notifications import router as notifications_router
 from api.accounts import router as accounts_router
@@ -61,7 +61,7 @@ app = FastAPI(
         "Consolidated API for 42-Bank. Provides authentication, "
         "key management, notifications, and A2A agent communication.\n\n"
         "## Authentication\n"
-        "Hackathon mode: Use `x-api-key: hackathon-demo-key-2024` header\n"
+        "API key required: set `x-api-key` header\n"
         "Production mode: Bearer JWT token in `Authorization` header\n\n"
         "## Endpoints\n"
         "- `/api/*` - Mobile API endpoints\n"
@@ -95,6 +95,32 @@ app = FastAPI(
 # Rate limiting
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+
+
+@app.post("/api/seed")
+async def seed_database(x_api_key: Optional[str] = Header(None)):
+    """Seed the database with test users (alice, bob). Requires x-api-key header."""
+    expected_key = os.getenv("AZURE_API_KEY", "")
+    if not x_api_key or x_api_key != expected_key:
+        raise HTTPException(401, "Invalid or missing x-api-key")
+
+    from ledger import LedgerEngine
+
+    ledger = LedgerEngine()
+    results = []
+
+    for username in ["alice", "bob"]:
+        try:
+            await ledger.create_user(username, f"{username}-pub-key")
+            results.append(f"{username}: created")
+        except Exception as e:
+            if "already exists" in str(e).lower() or "conflict" in str(e).lower():
+                results.append(f"{username}: already exists")
+            else:
+                results.append(f"{username}: error - {e}")
+
+    return {"status": "ok", "results": results}
+
 
 # CORS for mobile app
 cors_origins = os.getenv("CORS_ORIGINS", "*").split(",")
@@ -188,18 +214,23 @@ async def initialize_a2a():
             session_token = hashlib.sha256(username.encode()).hexdigest()
 
         # Get configuration
-        api_key = os.getenv("AZURE_API_KEY", "hackathon-demo-key-2024")
+        api_key = os.getenv("AZURE_API_KEY", "")
         mcp_server_url = os.getenv("MCP_SERVER_URL", "http://localhost:8001/mcp")
         model_name = os.getenv("MODEL_NAME")
 
         # Create A2A app
         logger.info("🔄 Creating A2A application...")
+        a2a_mode = (
+            "local"
+            if os.getenv("APP_ENV", "development") == "development"
+            else "hosted"
+        )
         a2a_app = await create_a2a_starlette_app(
             ledger=ledger,
             identity=identity,
             username=username,
             session_token=session_token,
-            mode="hosted",
+            mode=a2a_mode,
             model_name=model_name,
             api_key=api_key,
             require_auth=False,

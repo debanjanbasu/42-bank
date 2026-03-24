@@ -52,7 +52,7 @@ class APIStorage:
         Idempotent on (user_token, device_id_hash): re-upserting the same
         device preserves its original registered_at timestamp.
         """
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(datetime.UTC).isoformat()
         container = get_async_container("auth_devices")
         doc_id = _make_doc_id(user_token, device_id_hash)
         try:
@@ -60,16 +60,18 @@ class APIStorage:
             registered_at = existing.get("registered_at", now)
         except CosmosResourceNotFoundError:
             registered_at = now
-        await container.upsert_item({
-            "id": doc_id,
-            "user_token": user_token,
-            "device_id_hash": device_id_hash,
-            "device_name": device_name,
-            "biometric_enabled": biometric_enabled,
-            "push_token": push_token,
-            "registered_at": registered_at,
-            "updated_at": now,
-        })
+        await container.upsert_item(
+            {
+                "id": doc_id,
+                "user_token": user_token,
+                "device_id_hash": device_id_hash,
+                "device_name": device_name,
+                "biometric_enabled": biometric_enabled,
+                "push_token": push_token,
+                "registered_at": registered_at,
+                "updated_at": now,
+            }
+        )
 
     async def remove_device(self, user_token: str, device_id_hash: str) -> None:
         """Remove a registered device by its hashed ID."""
@@ -95,7 +97,6 @@ class APIStorage:
         async for item in container.query_items(
             query="SELECT * FROM c WHERE c.user_token = @t ORDER BY c.registered_at ASC",
             parameters=[{"name": "@t", "value": user_token}],
-
         ):
             items.append(item)
         return [
@@ -111,18 +112,20 @@ class APIStorage:
         ]
 
     async def save_key_backup(self, user_token: str, backup: dict[str, Any]) -> None:
-        await get_async_container("key_backups").upsert_item({
-            "id": backup["backup_id"],
-            "user_token": user_token,
-            "backup_id": backup["backup_id"],
-            "encrypted_private_key": backup["encrypted_private_key"],
-            "public_key": backup["public_key"],
-            "recovery_key_hash": backup["recovery_key_hash"],
-            "recovery_hint": backup.get("recovery_hint"),
-            "encryption_version": backup["encryption_version"],
-            "timestamp": backup["timestamp"],
-            "username": backup.get("username"),
-        })
+        await get_async_container("key_backups").upsert_item(
+            {
+                "id": backup["backup_id"],
+                "user_token": user_token,
+                "backup_id": backup["backup_id"],
+                "encrypted_private_key": backup["encrypted_private_key"],
+                "public_key": backup["public_key"],
+                "recovery_key_hash": backup["recovery_key_hash"],
+                "recovery_hint": backup.get("recovery_hint"),
+                "encryption_version": backup["encryption_version"],
+                "timestamp": backup["timestamp"],
+                "username": backup.get("username"),
+            }
+        )
 
     async def get_key_backup_by_user(self, user_token: str) -> Optional[dict[str, Any]]:
         container = get_async_container("key_backups")
@@ -130,7 +133,6 @@ class APIStorage:
         async for item in container.query_items(
             query="SELECT * FROM c WHERE c.user_token = @t",
             parameters=[{"name": "@t", "value": user_token}],
-
         ):
             items.append(item)
         if not items:
@@ -154,7 +156,6 @@ class APIStorage:
         async for item in container.query_items(
             query="SELECT c.id, c.backup_id FROM c WHERE c.user_token = @t",
             parameters=[{"name": "@t", "value": user_token}],
-
         ):
             items.append(item)
         for item in items:
@@ -168,15 +169,17 @@ class APIStorage:
         user_token: str,
         expires_at: str,
     ) -> None:
-        now = datetime.utcnow().isoformat()
-        await get_async_container("restore_challenges").upsert_item({
-            "id": backup_id,
-            "backup_id": backup_id,
-            "nonce": nonce,
-            "created_at": now,
-            "expires_at": expires_at,
-            "user_token": user_token,
-        })
+        now = datetime.now(datetime.UTC).isoformat()
+        await get_async_container("restore_challenges").upsert_item(
+            {
+                "id": backup_id,
+                "backup_id": backup_id,
+                "nonce": nonce,
+                "created_at": now,
+                "expires_at": expires_at,
+                "user_token": user_token,
+            }
+        )
 
     async def get_challenge(self, backup_id: str) -> Optional[dict[str, Any]]:
         try:
@@ -207,28 +210,33 @@ class APIStorage:
         async for item in container.query_items(
             query="SELECT VALUE COUNT(1) FROM c WHERE c.user_token = @t",
             parameters=[{"name": "@t", "value": user_token}],
-
         ):
             items.append(item)
         val = items[0] if items else 0
         return val if isinstance(val, int) else 0
 
     async def revoke_token(self, jti: str, user_token: str) -> None:
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(datetime.UTC).isoformat()
         try:
-            await get_async_container("token_blacklist").read_item(item=jti, partition_key=jti)
+            await get_async_container("token_blacklist").read_item(
+                item=jti, partition_key=jti
+            )
         except CosmosResourceNotFoundError:
-            await get_async_container("token_blacklist").upsert_item({
-                "id": jti,
-                "jti": jti,
-                "user_token": user_token,
-                "revoked_at": now,
-            })
+            await get_async_container("token_blacklist").upsert_item(
+                {
+                    "id": jti,
+                    "jti": jti,
+                    "user_token": user_token,
+                    "revoked_at": now,
+                }
+            )
 
     async def is_token_revoked(self, jti: str) -> bool:
         """Check if a JWT (identified by its JTI claim) has been revoked."""
         try:
-            await get_async_container("token_blacklist").read_item(item=jti, partition_key=jti)
+            await get_async_container("token_blacklist").read_item(
+                item=jti, partition_key=jti
+            )
             return True
         except CosmosResourceNotFoundError:
             return False
@@ -239,7 +247,6 @@ class APIStorage:
         async for item in container.query_items(
             query="SELECT c.id, c.jti FROM c WHERE c.revoked_at < @ts",
             parameters=[{"name": "@ts", "value": before_timestamp}],
-
         ):
             items.append(item)
         for item in items:

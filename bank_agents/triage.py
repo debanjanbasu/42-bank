@@ -1,18 +1,10 @@
 """Triage Agent - Routes user queries to appropriate banking specialists."""
 
-from typing import Protocol, Any, Optional, Sequence
+from typing import Any, Optional
 
 from agent_framework import Agent
 
-
-class ChatClientProtocol(Protocol):
-    def as_agent(
-        self,
-        *,
-        name: Optional[str] = None,
-        instructions: Optional[str] = None,
-        tools: Optional[Sequence[Any]] = None,
-    ) -> Agent: ...
+from bank_agents._types import ChatClientProtocol
 
 
 def get_agent(client: ChatClientProtocol, tools=None) -> Agent:

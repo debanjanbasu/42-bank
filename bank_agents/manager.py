@@ -1,24 +1,16 @@
 """Manager Agent - Handles escalations and oversight."""
 
-from typing import Protocol, Any, Optional, Sequence
+from typing import Any, Optional
 
 from agent_framework import Agent
 
-
-class ChatClientProtocol(Protocol):
-    def as_agent(
-        self,
-        *,
-        name: Optional[str] = None,
-        instructions: Optional[str] = None,
-        tools: Optional[Sequence[Any]] = None,
-    ) -> Agent: ...
+from bank_agents._types import ChatClientProtocol
 
 
 def get_agent(client: ChatClientProtocol, tools) -> Agent:
     """
     Create BankManager agent with MCP tools.
-    
+
     Args:
         client: Chat client
         tools: MCP tools (single MCPStreamableHTTPTool or list)

@@ -1,22 +1,34 @@
-# 42-Bank Single-Container Deployment
-# AMD64 only for Azure deployment
+# 42-Bank Single-Container Deployment (Multi-stage, minimal)
+# AMD64 for Azure deployment
 
-FROM python:3.12-slim
+# ---- Build stage ----
+FROM python:3.14-slim AS builder
 
-WORKDIR /app
+WORKDIR /build
 
-RUN apt-get update && apt-get install -y --no-install-recommends gcc curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 COPY pyproject.toml uv.lock ./
 
-RUN uv venv /app/venv && \
-    . /app/venv/bin/activate && \
+RUN uv venv /build/venv && \
+    . /build/venv/bin/activate && \
     uv pip install --no-cache -r pyproject.toml
 
+# ---- Runtime stage ----
+FROM python:3.14-slim
+
+WORKDIR /app
+
+# Only curl needed at runtime (healthcheck)
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
+# Copy venv from builder (contains all Python deps, no gcc/uv)
+COPY --from=builder /build/venv /app/venv
+
+# Copy application code
 COPY . .
-COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh && mkdir -p /app/data/keys
 
 ENV PATH="/app/venv/bin:$PATH"

@@ -158,7 +158,7 @@ async def a2a_server(mcp_server):
     from utils import get_foundry_local_endpoint
 
     try:
-        foundry_endpoint = get_foundry_local_endpoint()
+        foundry_endpoint = await get_foundry_local_endpoint()
         env["FOUNDRY_LOCAL_ENDPOINT"] = foundry_endpoint
         print(f"Using Foundry at: {foundry_endpoint}")
     except RuntimeError as e:

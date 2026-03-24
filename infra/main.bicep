@@ -212,8 +212,10 @@ resource containerAppsEnv 'Microsoft.App/managedEnvironments@2023-05-01' = {
   }
 }
 
-// Get ACR credentials
-var acrCredentials = az acr credential show --name acrName --resource-group resourceGroup().name
+// ACR credentials for Container App
+resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
+  name: acrName
+}
 
 // Container App
 resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {

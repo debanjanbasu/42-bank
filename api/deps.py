@@ -15,22 +15,9 @@ JWT_ALGORITHM = "HS256"
 limiter = Limiter(key_func=get_remote_address)
 
 
-def validate_jwt_configuration() -> None:
-    env = os.getenv("APP_ENV", "development").lower()
-    requires_strong_secret = env in {"production", "staging"}
-
-    if JWT_SECRET == "dev-secret-change-in-production" or len(JWT_SECRET) < 32:
-        if requires_strong_secret:
-            raise RuntimeError(
-                "JWT_SECRET must be explicitly configured with at least 32 characters in staging/production"
-            )
-        if os.getenv("REQUIRE_STRONG_SECRETS"):
-            raise RuntimeError(
-                "JWT_SECRET is using insecure default. Set JWT_SECRET or unset REQUIRE_STRONG_SECRETS."
-            )
-
-
-async def validate_token(token: str, expected_type: Optional[str] = "access") -> dict[str, Any]:
+async def validate_token(
+    token: str, expected_type: Optional[str] = "access"
+) -> dict[str, Any]:
     """Decode and validate a JWT token, checking expiry, type, and revocation."""
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
@@ -78,6 +65,7 @@ def validate_env() -> None:
 
     if warnings_list:
         import warnings as _w
+
         for w in warnings_list:
             _w.warn(w, stacklevel=2)
 
