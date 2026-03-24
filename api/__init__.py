@@ -11,8 +11,9 @@ import os
 import time
 import uuid as _uuid
 from contextlib import asynccontextmanager
+from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -35,12 +36,25 @@ logger = logging.getLogger("42bank.api")
 @asynccontextmanager
 async def lifespan(fastapi_app: FastAPI):
     """Initialize A2A on startup."""
-    logger.info("🚀 Starting FastAPI lifespan...")
-    # Initialize A2A synchronously on startup
-    success = await initialize_a2a()
-    if not success:
-        logger.error("❌ A2A initialization failed on startup")
-    logger.info(f"✅ Lifespan complete, A2A initialized: {success}")
+    import sys
+
+    print("🚀 Starting FastAPI lifespan...", flush=True, file=sys.stderr)
+    try:
+        success = await initialize_a2a()
+        if not success:
+            print(
+                "❌ A2A initialization failed on startup", flush=True, file=sys.stderr
+            )
+        print(
+            f"✅ Lifespan complete, A2A initialized: {success}",
+            flush=True,
+            file=sys.stderr,
+        )
+    except Exception as e:
+        print(f"❌ A2A lifespan exception: {e}", flush=True, file=sys.stderr)
+        import traceback
+
+        traceback.print_exc(file=sys.stderr)
 
     # Log mounted routes
     mounted_count = 0
