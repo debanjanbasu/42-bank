@@ -1,7 +1,7 @@
 import hashlib
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from azure.cosmos import PartitionKey
@@ -36,7 +36,6 @@ class APIStorage:
             db.create_container_if_not_exists(
                 id=container_name,
                 partition_key=PartitionKey(path=partition_path),
-                offer_throughput=400,
             )
 
     async def upsert_device(
@@ -52,7 +51,7 @@ class APIStorage:
         Idempotent on (user_token, device_id_hash): re-upserting the same
         device preserves its original registered_at timestamp.
         """
-        now = datetime.now(datetime.UTC).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         container = get_async_container("auth_devices")
         doc_id = _make_doc_id(user_token, device_id_hash)
         try:
@@ -169,7 +168,7 @@ class APIStorage:
         user_token: str,
         expires_at: str,
     ) -> None:
-        now = datetime.now(datetime.UTC).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         await get_async_container("restore_challenges").upsert_item(
             {
                 "id": backup_id,
@@ -216,7 +215,7 @@ class APIStorage:
         return val if isinstance(val, int) else 0
 
     async def revoke_token(self, jti: str, user_token: str) -> None:
-        now = datetime.now(datetime.UTC).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         try:
             await get_async_container("token_blacklist").read_item(
                 item=jti, partition_key=jti

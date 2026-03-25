@@ -21,7 +21,7 @@ Endpoints:
 """
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, HTTPException, Depends, Header
@@ -234,14 +234,14 @@ async def send_notification_to_user(
         results.append({"device_id": device["device_id"], **result})
 
     # Store in history
-    notification_id = f"notif_{datetime.now(datetime.UTC).timestamp()}"
+    notification_id = f"notif_{datetime.now(timezone.utc).timestamp()}"
     _notification_history[notification_id] = {
         "user_id": user_id,
         "title": title,
         "body": body,
         "data": data,
         "notification_type": notification_type,
-        "sent_at": datetime.now(datetime.UTC).isoformat(),
+        "sent_at": datetime.now(timezone.utc).isoformat(),
         "results": results,
     }
 
@@ -283,7 +283,7 @@ async def register_push_token(
         # Update existing registration
         existing["push_token"] = request.push_token
         existing["platform"] = request.platform
-        existing["updated_at"] = datetime.now(datetime.UTC).isoformat()
+        existing["updated_at"] = datetime.now(timezone.utc).isoformat()
     else:
         # Add new registration
         devices.append(
@@ -292,7 +292,7 @@ async def register_push_token(
                 "platform": request.platform,
                 "device_id": request.device_id,
                 "device_name": request.device_name,
-                "registered_at": datetime.now(datetime.UTC).isoformat(),
+                "registered_at": datetime.now(timezone.utc).isoformat(),
             }
         )
 
@@ -352,7 +352,7 @@ async def send_notification(
 
     return SendNotificationResponse(
         status="success" if success else "partial_failure",
-        message_id=f"batch_{datetime.now(datetime.UTC).timestamp()}",
+        message_id=f"batch_{datetime.now(timezone.utc).timestamp()}",
         error=None if success else "Some devices failed",
     )
 
@@ -425,7 +425,7 @@ async def send_test_notification(user: dict = Depends(get_current_user)):
         user_token,
         "Test Notification",
         "This is a test from 42-Bank!",
-        {"type": "test", "timestamp": datetime.now(datetime.UTC).isoformat()},
+        {"type": "test", "timestamp": datetime.now(timezone.utc).isoformat()},
         "general",
     )
 

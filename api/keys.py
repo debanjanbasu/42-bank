@@ -25,7 +25,7 @@ import base64
 import binascii
 import hashlib
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -171,7 +171,7 @@ async def backup_keys(request: BackupRequest, user: dict = Depends(get_current_u
 
     # Generate backup ID
     backup_id = generate_backup_id()
-    timestamp = datetime.now(datetime.UTC).isoformat()
+    timestamp = datetime.now(timezone.utc).isoformat()
 
     backup_record = {
         "backup_id": backup_id,
@@ -222,7 +222,7 @@ async def get_restore_challenge(
 
     # Generate nonce
     nonce = generate_nonce()
-    expires_at_dt = datetime.now(datetime.UTC) + timedelta(minutes=5)
+    expires_at_dt = datetime.now(timezone.utc) + timedelta(minutes=5)
     expires_at = expires_at_dt.isoformat()
 
     # Store challenge
@@ -277,7 +277,7 @@ async def restore_keys(request: RestoreRequest, user: dict = Depends(get_current
 
     # Verify challenge expiry
     expires_at_value = challenge.get("expires_at")
-    if not expires_at_value or datetime.now(datetime.UTC) > datetime.fromisoformat(
+    if not expires_at_value or datetime.now(timezone.utc) > datetime.fromisoformat(
         expires_at_value
     ):
         await get_api_storage().delete_challenge(request.backup_id)

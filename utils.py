@@ -7,7 +7,7 @@ from typing import Optional
 
 from dotenv import load_dotenv
 from agent_framework.openai import OpenAIChatClient
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, AsyncAzureOpenAI
 
 from azure_projects_compat import patch_azure_projects_models
 
@@ -133,9 +133,12 @@ async def create_chat_client(mode: str = "local", model_name: Optional[str] = No
                 "AZURE_AI_PROJECT_ENDPOINT and AZURE_OPENAI_API_KEY required for hosted mode"
             )
 
-        async_client = AsyncOpenAI(
+        api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2025-01-01-preview")
+
+        async_client = AsyncAzureOpenAI(
+            azure_endpoint=project_endpoint.rstrip("/"),
             api_key=api_key,
-            base_url=f"{project_endpoint}openai/v1/",
+            api_version=api_version,
         )
         client = OpenAIChatClient(
             model_id=model_deployment_name, async_client=async_client

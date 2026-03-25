@@ -43,10 +43,12 @@ from azure.core.credentials import AccessToken
 from dotenv import load_dotenv
 from utils import create_chat_client
 from mcp_client import get_banking_mcp_tools
+from agent_framework import MCPStreamableHTTPTool
 from bank_agents import triage, transaction, inquiry, advisor, manager
 from identity import IdentityManager
 from ledger import LedgerEngine
 from api.deps import JWT_SECRET, JWT_ALGORITHM
+from mcp_server import set_user_context
 
 load_dotenv()
 
@@ -200,22 +202,96 @@ class A2AAgentHandler:
         self,
         agent: Agent,
         agent_key: str,
+        chat_client=None,
         all_agents: Optional[Dict[str, Agent]] = None,  # type: ignore[assignment]
         base_url: str = "http://localhost:8000",
         mcp_tools=None,
+        mcp_server_url: str = "http://localhost:8001/mcp",
         api_key: Optional[str] = None,
     ):
         self.agent = agent
         self.agent_key = agent_key
+        self.chat_client = chat_client
         self.all_agents = all_agents or {}
         self.base_url = base_url
         self.mcp_tools = mcp_tools
+        self.mcp_server_url = mcp_server_url
         self.api_key = api_key
 
         # Create httpx async client for A2A routing (only for triage)
         self.http_client = None
         if agent_key == "triage":
             self.http_client = httpx.AsyncClient(timeout=None)
+
+    def _create_user_tools(self, user_token: str):
+        """Create MCP tools scoped to a specific user via x-user-token header."""
+        headers = {"x-user-token": user_token}
+        client = httpx.AsyncClient(timeout=30, headers=headers)
+        return MCPStreamableHTTPTool(
+            name="banking-tools",
+            url=self.mcp_server_url,
+            load_tools=True,
+            http_client=client,
+            terminate_on_close=True,
+        )
+
+    def _make_embedded_tools(self, user_token: str):
+        """Create banking tools as direct Python functions (same process, no MCP HTTP).
+
+        These call the MCP server's tool functions directly and use a ContextVar
+        for per-request user identity. This avoids the MCP HTTP round-trip and
+        allows per-request user context.
+        """
+        from mcp_server import (
+            check_balance as _check_balance,
+            view_history as _view_history,
+            send_money as _send_money,
+            request_money as _request_money,
+            list_products as _list_products,
+            open_new_account as _open_new_account,
+            set_user_context as _set_ctx,
+        )
+
+        set_user_context(user_token)
+
+        async def check_balance() -> str:
+            """View your checking account balance."""
+            _set_ctx(user_token)
+            return await _check_balance()
+
+        async def view_history() -> str:
+            """View transaction history for your checking account."""
+            _set_ctx(user_token)
+            return await _view_history()
+
+        async def send_money(to: str, amount: float, note: str) -> str:
+            """Send money from your checking account to another user."""
+            _set_ctx(user_token)
+            return await _send_money(to, amount, note)
+
+        async def request_money(from_user: str, amount: float, note: str) -> str:
+            """Request payment from another user."""
+            _set_ctx(user_token)
+            return await _request_money(from_user, amount, note)
+
+        async def list_products() -> str:
+            """List available bank products and services."""
+            _set_ctx(user_token)
+            return await _list_products()
+
+        async def open_new_account(account_type: str) -> str:
+            """Open a new bank account."""
+            _set_ctx(user_token)
+            return await _open_new_account(account_type)
+
+        return [
+            check_balance,
+            view_history,
+            send_money,
+            request_money,
+            list_products,
+            open_new_account,
+        ]
 
     async def _ensure_mcp_connected(self):
         """Ensure MCP tools are connected before use."""
@@ -254,14 +330,19 @@ class A2AAgentHandler:
             if part.get("kind") == "text":
                 user_text += part.get("text", "")
 
+        # Extract authenticated user token from JWT (set by AuthMiddleware)
+        user_token = getattr(request.state, "session_token", None)
+
         # Special handling for triage: route via A2A HTTP streaming to target agent
         if self.agent_key == "triage" and self.all_agents:
             return await self._handle_triage_routing(
-                user_text, context_id, body, request, use_streaming
+                user_text, context_id, body, request, use_streaming, user_token
             )
 
         # Normal agent execution with streaming support
-        return await self._handle_agent_execution(user_text, context_id, use_streaming)
+        return await self._handle_agent_execution(
+            user_text, context_id, use_streaming, user_token
+        )
 
     async def _handle_triage_routing(
         self,
@@ -270,9 +351,14 @@ class A2AAgentHandler:
         original_body: dict,
         request: Request,
         use_streaming: bool,
+        user_token: Optional[str] = None,
     ):
         """Route via A2A protocol using direct HTTP."""
         try:
+            # Set MCP user context so routed agent tools use authenticated user
+            if user_token:
+                set_user_context(user_token)
+
             # Get routing decision from triage agent
             response = await self.agent.run(user_text)
             response_text = (
@@ -290,86 +376,69 @@ class A2AAgentHandler:
             else:
                 target_key = None
 
-            if target_key:
-                # Forward to target agent via HTTP
-                target_url = f"{self.base_url}/a2a/{target_key}/v1/message"
-                if use_streaming:
-                    target_url += ":stream"
+            if target_key and target_key in self.all_agents:
+                # Execute target agent directly (in-process) to preserve user context
+                target_agent = self.all_agents[target_key]
+
+                # Create user-scoped tools if we have a user token
+                if user_token and self.chat_client:
+                    user_tools = self._make_embedded_tools(user_token)
+                    target_agent = self.chat_client.as_agent(
+                        name=target_agent.name or target_key,
+                        instructions=getattr(target_agent, "instructions", None) or "",
+                        tools=user_tools,
+                    )
 
                 if use_streaming:
-                    # Build headers with auth forwarding
-                    forward_headers = {"Content-Type": "application/json"}
-                    if self.api_key:
-                        forward_headers["x-api-key"] = self.api_key
+                    response_stream = await target_agent.run(user_text, stream=True)
 
-                    async def forward_stream():
-                        async with self.http_client.stream(  # type: ignore[union-attr]
-                            "POST",
-                            target_url,
-                            json=original_body,
-                            headers=forward_headers,
-                        ) as target_response:
-                            if target_response.status_code != 200:
-                                error_data = {
-                                    "result": {
-                                        "kind": "message",
-                                        "role": "agent",
-                                        "parts": [
-                                            {
-                                                "kind": "text",
-                                                "text": f"Error: upstream agent returned status {target_response.status_code}",
-                                            }
-                                        ],
-                                        "messageId": str(uuid.uuid4()),
-                                        "contextId": context_id,
+                    async def generate_sse():
+                        try:
+                            async for update in response_stream:
+                                if hasattr(update, "text") and update.text:
+                                    event_data = {
+                                        "result": {
+                                            "kind": "message",
+                                            "role": "agent",
+                                            "parts": [
+                                                {"kind": "text", "text": update.text}
+                                            ],
+                                            "messageId": str(uuid.uuid4()),
+                                            "contextId": context_id,
+                                        }
                                     }
-                                }
-                                yield f"data: {json.dumps(error_data)}\n\n"
-                                yield "data: [DONE]\n\n"
-                                return
-
-                            async for chunk in target_response.aiter_bytes():
-                                yield chunk
+                                    yield f"data: {json.dumps(event_data)}\n\n"
+                            yield "data: [DONE]\n\n"
+                        except Exception as e:
+                            error_data = {
+                                "error": {"message": str(e), "contextId": context_id}
+                            }
+                            yield f"data: {json.dumps(error_data)}\n\n"
 
                     return StreamingResponse(
-                        forward_stream(),
+                        generate_sse(),
                         media_type="text/event-stream",
                         headers={
                             "Cache-Control": "no-cache",
                             "X-Accel-Buffering": "no",
                         },
                     )
-
-                # Forward the original message
-                forward_headers = {"Content-Type": "application/json"}
-                if self.api_key:
-                    forward_headers["x-api-key"] = self.api_key
-                target_response = await self.http_client.post(  # type: ignore[union-attr]
-                    target_url,
-                    json=original_body,
-                    headers=forward_headers,
-                )
-
-                # Forward JSON response, with error handling for non-200
-                if target_response.status_code == 200:
-                    try:
-                        return target_response.json()
-                    except Exception:
-                        pass
-                return {
-                    "result": {
-                        "kind": "message",
-                        "role": "agent",
-                        "parts": [
-                            {
-                                "kind": "text",
-                                "text": f"Error: upstream agent returned status {target_response.status_code}",
-                            }
-                        ],
-                        "messageId": str(uuid.uuid4()),
-                        "contextId": context_id,
+                else:
+                    result = await target_agent.run(user_text)
+                    response_text = (
+                        result.text.strip() if hasattr(result, "text") else str(result)
+                    )
+                    if not response_text or response_text == "None":
+                        response_text = "I've processed your request."
+                    return {
+                        "result": {
+                            "kind": "message",
+                            "role": "agent",
+                            "parts": [{"kind": "text", "text": response_text}],
+                            "messageId": str(uuid.uuid4()),
+                            "contextId": context_id,
+                        }
                     }
-                }
             else:
                 return {
                     "result": {
@@ -400,13 +469,27 @@ class A2AAgentHandler:
             }
 
     async def _handle_agent_execution(
-        self, user_text: str, context_id: str, use_streaming: bool
+        self,
+        user_text: str,
+        context_id: str,
+        use_streaming: bool,
+        user_token: Optional[str] = None,
     ):
         """Execute agent with optional streaming."""
+        # If we have a user token, create agent with user-scoped embedded tools
+        agent = self.agent
+        if user_token and self.chat_client and self.agent_key != "triage":
+            user_tools = self._make_embedded_tools(user_token)
+            agent = self.chat_client.as_agent(
+                name=self.agent.name or self.agent_key,
+                instructions=getattr(self.agent, "instructions", None) or "",
+                tools=user_tools,
+            )
+
         try:
             if use_streaming:
                 # Use agent streaming
-                response_stream = await self.agent.run(user_text, stream=True)
+                response_stream = await agent.run(user_text, stream=True)
 
                 async def generate_sse():
                     """Generate Server-Sent Events from agent stream."""
@@ -442,7 +525,7 @@ class A2AAgentHandler:
                 )
             else:
                 # Non-streaming response
-                response = await self.agent.run(user_text)
+                response = await agent.run(user_text)
                 response_text = response.text.strip()
 
                 if not response_text or response_text == "None":
@@ -529,11 +612,22 @@ async def create_a2a_app(
     for key, agent in agents.items():
         if key == "triage":
             handlers[key] = A2AAgentHandler(
-                agent, key, all_agents=agents, base_url=base_url, api_key=api_key
+                agent,
+                key,
+                chat_client=client,
+                all_agents=agents,
+                base_url=base_url,
+                mcp_server_url=mcp_server_url,
+                api_key=api_key,
             )
         else:
             handlers[key] = A2AAgentHandler(
-                agent, key, base_url=base_url, api_key=api_key
+                agent,
+                key,
+                chat_client=client,
+                base_url=base_url,
+                mcp_server_url=mcp_server_url,
+                api_key=api_key,
             )
 
     routes = []

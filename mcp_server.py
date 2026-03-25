@@ -6,6 +6,7 @@ Transport modes:
 - stdio: For local development with Claude Desktop
 """
 
+import contextvars
 import os
 import sys
 import asyncio
@@ -24,6 +25,26 @@ from starlette.requests import Request
 mcp = FastMCP("42-bank-tools")
 
 
+# Per-request user context (async-safe, works with concurrent requests)
+_user_token_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "user_token", default=None
+)
+
+
+def set_user_context(user_token: str) -> None:
+    """Set the user token for the current request context.
+
+    Call this before executing A2A agent tool calls so the MCP tools
+    operate on the authenticated user's data.
+    """
+    _user_token_var.set(user_token)
+
+
+def get_user_token() -> Optional[str]:
+    """Get the user token from the current request context."""
+    return _user_token_var.get()
+
+
 # Add a simple health check endpoint
 @mcp.custom_route("/health", methods=["GET"])
 async def health_check(request: Request) -> JSONResponse:
@@ -38,8 +59,26 @@ _initialized = False
 
 
 async def _ensure_initialized(username: str = "alice") -> None:
-    """Ensure banking context is initialized in the current event loop."""
+    """Ensure banking context is initialized in the current event loop.
+
+    If a per-request user token is set via set_user_context(), that takes
+    precedence over the default username-based initialization. This allows
+    A2A agents to operate on the authenticated user's data.
+    """
     global _ledger, _identity, _username, _session_token, _initialized
+
+    # Check for per-request user context (set by A2A handler from JWT)
+    ctx_token = get_user_token()
+    if ctx_token:
+        if not _ledger:
+            _ledger = LedgerEngine()
+        if not _identity:
+            _identity = IdentityManager()
+        # Use the token directly — it's the user's ledger token from their JWT
+        _session_token = ctx_token
+        _username = username
+        _initialized = True
+        return
 
     if _initialized:
         return
@@ -134,10 +173,16 @@ async def send_money(to: str, amount: float, note: str) -> str:
     if not recipient_token:
         return f"FAILED: User '{to}' not found."
 
-    # Sign and execute transfer
-    sig = _identity.sign_message(_username, f"{to}{amount}{note}".encode())
+    # Sign and execute transfer (signing optional — mobile users sign on-device)
+    sig_hex = ""
+    try:
+        sig = _identity.sign_message(_username, f"{to}{amount}{note}".encode())
+        sig_hex = sig.hex()
+    except Exception:
+        pass  # Server-side signing not available for this user (mobile-only keys)
+
     success = await _ledger.transfer(
-        _session_token, to, amount, note, "checking", "checking", signature=sig.hex()
+        _session_token, to, amount, note, "checking", "checking", signature=sig_hex
     )
 
     if success:
@@ -195,11 +240,17 @@ async def list_pending_requests() -> List[Dict[str, Any]]:
 async def approve_payment(request_id: str) -> str:
     """Approve a payment request."""
     await _ensure_initialized()
-    if not _ledger or not _identity or not _username or not _session_token:
+    if not _ledger or not _session_token:
         return "ERROR: Not initialized"
-    sig = _identity.sign_message(_username, f"APPROVE{request_id}".encode())
+    sig_hex = ""
+    try:
+        if _identity and _username:
+            sig = _identity.sign_message(_username, f"APPROVE{request_id}".encode())
+            sig_hex = sig.hex()
+    except Exception:
+        pass
     success = await _ledger.approve_request(
-        _session_token, request_id, signature=sig.hex()
+        _session_token, request_id, signature=sig_hex
     )
     return "Payment approved." if success else "FAILED: Check funds or ID."
 

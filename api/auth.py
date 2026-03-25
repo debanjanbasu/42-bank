@@ -20,7 +20,7 @@ import os
 import hashlib
 import secrets
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import jwt
@@ -139,8 +139,8 @@ def generate_jwt(
         "username": username,
         "device_id": device_id,
         "jti": str(uuid.uuid4()),
-        "iat": datetime.now(datetime.UTC),
-        "exp": datetime.now(datetime.UTC) + timedelta(hours=expiry_hours),
+        "iat": datetime.now(timezone.utc),
+        "exp": datetime.now(timezone.utc) + timedelta(hours=expiry_hours),
         "type": "access",
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
@@ -153,8 +153,8 @@ def generate_refresh_token(user_id: str, username: str, device_id: str) -> str:
         "username": username,
         "device_id": device_id,
         "jti": str(uuid.uuid4()),
-        "iat": datetime.now(datetime.UTC),
-        "exp": datetime.now(datetime.UTC) + timedelta(days=JWT_REFRESH_EXPIRY_DAYS),
+        "iat": datetime.now(timezone.utc),
+        "exp": datetime.now(timezone.utc) + timedelta(days=JWT_REFRESH_EXPIRY_DAYS),
         "type": "refresh",
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
@@ -251,7 +251,7 @@ async def register(request: Request, body: RegisterRequest):
     access_token = generate_jwt(user_token, body.username, body.device_id)
     refresh_token = generate_refresh_token(user_token, body.username, body.device_id)
 
-    expires_at = datetime.now(datetime.UTC) + timedelta(hours=JWT_EXPIRY_HOURS)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRY_HOURS)
 
     return RegisterResponse(
         user_id=user_token,
@@ -293,7 +293,7 @@ async def login(request: Request, body: LoginRequest):
     access_token = generate_jwt(user.token, user.username, body.device_id)
     refresh_token = generate_refresh_token(user.token, user.username, body.device_id)
 
-    expires_at = datetime.now(datetime.UTC) + timedelta(hours=JWT_EXPIRY_HOURS)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRY_HOURS)
 
     return LoginResponse(
         user_id=user.token,
@@ -319,7 +319,7 @@ async def refresh_token(request: Request, body: RefreshRequest):
     # Generate new access token
     new_token = generate_jwt(payload["sub"], payload["username"], payload["device_id"])
 
-    expires_at = datetime.now(datetime.UTC) + timedelta(hours=JWT_EXPIRY_HOURS)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRY_HOURS)
 
     return RefreshResponse(token=new_token, expires_at=expires_at.isoformat())
 
@@ -449,7 +449,7 @@ async def dev_login(request: DevLoginRequest):
     refresh_token = generate_refresh_token(
         user_data.token, user_data.username, device_id
     )
-    expires_at = datetime.now(datetime.UTC) + timedelta(hours=JWT_EXPIRY_HOURS)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRY_HOURS)
 
     return DevLoginResponse(
         user_id=user_data.token,

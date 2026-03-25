@@ -109,7 +109,6 @@ class LedgerEngine:
             db.create_container_if_not_exists(
                 id=container_name,
                 partition_key=PartitionKey(path=partition_path),
-                offer_throughput=400,
             )
 
         products_c = get_container("products")
@@ -540,7 +539,9 @@ class LedgerEngine:
                 "timestamp": tx.timestamp,
                 "status": "completed",
             }
-            for i, tx in enumerate(reversed(user.accounts[account_type].history))  # Most recent first
+            for i, tx in enumerate(
+                reversed(user.accounts[account_type].history)
+            )  # Most recent first
         ]
 
     async def list_user_accounts(self, token: str) -> str:

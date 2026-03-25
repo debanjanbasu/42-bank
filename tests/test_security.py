@@ -8,7 +8,7 @@ import os
 import uuid
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import jwt as pyjwt
 
@@ -63,7 +63,7 @@ class TestJWTSecurity:
             {
                 "sub": "alice_tok",
                 "type": "access",
-                "exp": datetime.now(datetime.UTC) + timedelta(hours=1),
+                "exp": datetime.now(timezone.utc) + timedelta(hours=1),
             },
             JWT_SECRET,
             algorithm="HS512",
@@ -81,7 +81,7 @@ class TestJWTSecurity:
             {
                 "sub": "alice_tok",
                 "type": "access",
-                "exp": datetime.now(datetime.UTC) - timedelta(seconds=1),
+                "exp": datetime.now(timezone.utc) - timedelta(seconds=1),
             },
             JWT_SECRET,
             algorithm=JWT_ALGORITHM,
@@ -99,7 +99,7 @@ class TestJWTSecurity:
             {
                 "sub": "alice_tok",
                 "type": "access",
-                "exp": datetime.now(datetime.UTC) + timedelta(hours=1),
+                "exp": datetime.now(timezone.utc) + timedelta(hours=1),
             },
             "completely-wrong-secret",
             algorithm=JWT_ALGORITHM,
@@ -117,7 +117,7 @@ class TestJWTSecurity:
             {
                 "sub": "alice_tok",
                 "type": "refresh",
-                "exp": datetime.now(datetime.UTC) + timedelta(days=30),
+                "exp": datetime.now(timezone.utc) + timedelta(days=30),
             },
             JWT_SECRET,
             algorithm=JWT_ALGORITHM,
@@ -136,7 +136,7 @@ class TestJWTSecurity:
                 "username": "alice",
                 "type": "access",
                 "jti": str(uuid.uuid4()),
-                "exp": datetime.now(datetime.UTC) + timedelta(hours=1),
+                "exp": datetime.now(timezone.utc) + timedelta(hours=1),
             },
             JWT_SECRET,
             algorithm=JWT_ALGORITHM,
@@ -163,7 +163,7 @@ class TestTokenRevocation:
                 "username": "alice",
                 "type": "access",
                 "jti": jti,
-                "exp": datetime.now(datetime.UTC) + timedelta(hours=1),
+                "exp": datetime.now(timezone.utc) + timedelta(hours=1),
             },
             JWT_SECRET,
             algorithm=JWT_ALGORITHM,
